@@ -92,9 +92,9 @@
     <label for="input-text">Dán đoạn giới thiệu sản phẩm — tool tự nhận diện và thay thế tất cả link Shopee</label>
     <textarea id="input-text" rows="8" placeholder="Ví dụ:&#10;&#10;Sản phẩm hot sale 50%! Mua ngay tại https://s.shopee.vn/xxxxx nhé!"></textarea>
     <div class="btn-row">
-      <button class="btn btn-primary" id="btn-convert" onclick="convertText()" disabled>Chuyển đổi</button>
-      <button class="btn btn-secondary" onclick="clearAll()">Xóa</button>
-      <button class="btn btn-secondary" onclick="resetAll()">Reset</button>
+      <button type="button" class="btn btn-primary" id="btn-convert" onclick="convertText()" disabled>Chuyển đổi</button>
+      <button type="button" class="btn btn-secondary" onclick="clearAll()">Xóa</button>
+      <button type="button" class="btn btn-secondary" onclick="resetAll()">Reset</button>
     </div>
     <div class="progress-bar-wrap" id="progress-wrap">
       <div class="progress-bar" id="progress-bar"></div>
@@ -108,8 +108,8 @@
     <label for="converted-text">Nội dung sau khi thay link aff</label>
     <textarea id="converted-text" rows="8"></textarea>
     <div class="btn-row">
-      <button class="btn btn-copy" onclick="copyOutput(this)">Sao chép nội dung</button>
-      <button class="btn btn-secondary" onclick="exportCsv()">Export CSV</button>
+      <button type="button" class="btn btn-copy" onclick="copyOutput(this)">Sao chép nội dung</button>
+      <button type="button" class="btn btn-secondary" onclick="exportCsv()">Export CSV</button>
     </div>
     <div class="detail-title">Chi tiết từng link (<span id="detail-count">0</span>)</div>
     <table class="result-table">
@@ -337,7 +337,7 @@
           cells[3].innerHTML = unchanged
             ? '<span class="status-badge badge-warn">Không đổi</span>'
             : '<span class="status-badge badge-ok">OK</span>';
-          cells[4].innerHTML = `<button class="btn btn-copy" onclick="copyText('${val}',this)">Copy</button>`;
+          cells[4].innerHTML = `<button type="button" class="btn btn-copy" onclick="copyText('${val}',this)">Copy</button>`;
         }
       });
 
@@ -382,10 +382,33 @@
       setTimeout(() => btn.textContent = orig, 1500);
     }
 
+    function safeCopyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise((resolve, reject) => {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        try {
+          const success = document.execCommand('copy');
+          document.body.removeChild(textarea);
+          success ? resolve() : reject(new Error('Clipboard not available'));
+        } catch (err) {
+          document.body.removeChild(textarea);
+          reject(err);
+        }
+      });
+    }
+
     function copyOutput(btn) {
       const text = document.getElementById('converted-text').value;
       if (!text) return alert('Chưa có nội dung.');
-      navigator.clipboard.writeText(text).then(() => flashBtn(btn));
+      safeCopyText(text).then(() => flashBtn(btn)).catch(() => alert('Không thể sao chép nội dung. Hãy thử lại.'));
     }
 
     function exportCsv() {
@@ -403,7 +426,7 @@
     }
 
     function copyText(text, btn) {
-      navigator.clipboard.writeText(text).then(() => flashBtn(btn));
+      safeCopyText(text).then(() => flashBtn(btn)).catch(() => alert('Không thể sao chép nội dung. Hãy thử lại.'));
     }
 
     function truncate(str, n) { return str.length > n ? str.slice(0, n) + '…' : str; }
