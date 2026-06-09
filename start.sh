@@ -18,16 +18,11 @@ while true; do
     python3 relay.py &
     sleep 2
 
-    echo "[$(date '+%H:%M:%S')] Khởi động Chrome với Extension..."
-    google-chrome-stable \
-        --no-first-run \
-        --disable-extensions-except="$(pwd)/extension" \
-        --load-extension="$(pwd)/extension" \
-        --user-data-dir="$HOME/.config/shopeeaff-chrome" \
-        "https://affiliate.shopee.vn/offer/custom_link" &
+    echo "[$(date '+%H:%M:%S')] Server đang chạy. Đợi 1 giờ rồi restart..."
+    sleep 3600
 
-    echo "[$(date '+%H:%M:%S')] Tất cả đang chạy. Đợi 15 phút rồi restart..."
-    sleep 900
+    echo "[$(date '+%H:%M:%S')] Reload tab affiliate trước khi restart..."
+    xdotool search --name "custom_link" key F5 2>/dev/null || true
 
     echo "[$(date '+%H:%M:%S')] Đang restart..."
 done
