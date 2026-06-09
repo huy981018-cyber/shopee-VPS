@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <style>
+    body { font-family: sans-serif; width: 260px; padding: 16px; font-size: 13px; }
+    h3   { color: #ee4d2d; margin: 0 0 12px; }
+    .status { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 12px; }
+    .ok  { background: #e8f5e9; color: #2e7d32; }
+    .err { background: #fce4ec; color: #b71c1c; }
+    .btn {
+      width: 100%; padding: 8px; background: #ee4d2d; color: #fff;
+      border: none; border-radius: 6px; font-size: 13px;
+      font-weight: 600; cursor: pointer; margin-top: 6px;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-secondary { background: #f0f0f0; color: #333; }
+  </style>
+</head>
+<body>
+  <h3>Shopee Aff Tool</h3>
+  <div id="status" class="status err">Đang kiểm tra...</div>
+  <button class="btn btn-secondary" onclick="openAffiliate()">Mở Shopee Affiliate</button>
+  <script src="popup.js"></script>
+</body>
+</html>

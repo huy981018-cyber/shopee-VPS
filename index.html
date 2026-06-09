@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shopee Aff Link Converter</title>
+  
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f5f5f5; min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 24px 16px;
+    }
+    h1       { font-size: 22px; font-weight: 700; color: #ee4d2d; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #888; margin-bottom: 20px; }
+
+    .banner {
+      width: 100%; max-width: 680px; padding: 3px 8px;
+      border-radius: 4px; font-size: 10px; margin-bottom: 6px;
+    }
+    .banner-ok   { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    .banner-err  { background: #fce4ec; color: #b71c1c; border: 1px solid #ef9a9a; }
+    .banner-warn { background: #fff8e1; color: #e65100; border: 1px solid #ffe082; }
+
+    .card {
+      background: #fff; border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 24px; width: 100%; max-width: 680px; margin-bottom: 14px;
+    }
+    .section-title { font-size: 15px; font-weight: 700; color: #333; margin-bottom: 14px; }
+    label { display: block; font-size: 11px; font-weight: 600; color: #333; margin-bottom: 4px; }
+    textarea {
+      width: 100%; border: 1px solid #ddd; border-radius: 8px;
+      padding: 10px 12px; font-size: 14px; color: #222;
+      resize: vertical; outline: none; transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: #ee4d2d; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 14px; border: none; border-radius: 6px;
+      font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn:hover    { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary   { background: #ee4d2d; color: #fff; }
+    .btn-secondary { background: #f0f0f0; color: #333; }
+    .btn-copy      { background: #4caf50; color: #fff; font-size: 12px; padding: 6px 12px; }
+    .btn-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+    .result-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+    .result-table th {
+      background: #fef2ef; color: #ee4d2d; padding: 8px 12px;
+      text-align: left; font-weight: 600; border-bottom: 2px solid #ee4d2d22;
+    }
+    .result-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+    .result-table tr:last-child td { border-bottom: none; }
+    .result-table tr:hover td { background: #fafafa; }
+    .link-cell { word-break: break-all; font-family: monospace; font-size: 12px; color: #1a73e8; }
+    .orig-cell { word-break: break-all; font-size: 12px; color: #666; }
+
+    .status-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-ok   { background: #e8f5e9; color: #2e7d32; }
+    .badge-err  { background: #fce4ec; color: #b71c1c; }
+    .badge-warn { background: #fff8e1; color: #f57f17; }
+    .badge-wait { background: #e3f2fd; color: #1565c0; }
+
+    .summary-box { border-radius: 4px; padding: 3px 8px; font-size: 10px; margin-bottom: 6px; line-height: 1.4; }
+    .summary-ok   { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    .summary-warn { background: #fff8e1; color: #e65100; border: 1px solid #ffe082; }
+
+    .progress-bar-wrap { width: 100%; height: 4px; background: #f0f0f0; border-radius: 2px; margin-top: 12px; overflow: hidden; display: none; }
+    .progress-bar { height: 100%; background: #ee4d2d; width: 0%; transition: width 0.3s ease; border-radius: 2px; }
+
+    .detail-title { font-size: 13px; font-weight: 600; color: #666; margin-top: 20px; margin-bottom: 4px; }
+    #converted-text { background: #f9f9f9; font-size: 13px; color: #222; }
+  </style>
+</head>
+<body>
+  <h1>Shopee Aff Link Converter</h1>
+
+  <!-- Banner trạng thái server -->
+  <div id="banner" class="banner banner-err">
+    ⚠️ Đang kết nối...
+  </div>
+
+  <!-- Input -->
+  <div class="card">
+    <div class="section-title">Chuyển đổi link trong đoạn văn bản</div>
+    <label for="input-text">Dán đoạn giới thiệu sản phẩm — tool tự nhận diện và thay thế tất cả link Shopee</label>
+    <textarea id="input-text" rows="8" placeholder="Ví dụ:&#10;&#10;Sản phẩm hot sale 50%! Mua ngay tại https://s.shopee.vn/xxxxx nhé!"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-convert" onclick="convertText()" disabled>Chuyển đổi</button>
+      <button class="btn btn-secondary" onclick="clearAll()">Xóa</button>
+      <button class="btn btn-secondary" onclick="resetAll()">Reset</button>
+    </div>
+    <div class="progress-bar-wrap" id="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+  </div>
+
+  <!-- Output -->
+  <div class="card" id="output-section">
+    <div class="section-title">Kết quả (<span id="result-count">0</span> link)</div>
+    <div id="summary-box" class="summary-box" style="display:none;"></div>
+    <label for="converted-text">Nội dung sau khi thay link aff</label>
+    <textarea id="converted-text" rows="8"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-copy" onclick="copyOutput(this)">Sao chép nội dung</button>
+      <button class="btn btn-secondary" onclick="exportCsv()">Export CSV</button>
+    </div>
+    <div class="detail-title">Chi tiết từng link (<span id="detail-count">0</span>)</div>
+    <table class="result-table">
+      <thead>
+        <tr><th>#</th><th>Link gốc</th><th>Link aff</th><th>Trạng thái</th><th></th></tr>
+      </thead>
+      <tbody id="result-tbody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    // ============================================================
+    //  KIỂM TRA SERVER
+    // ============================================================
+
+    const RELAY_BASE = location.origin;
+
+
+    async function resetAll() {
+      // Reset UI
+      const btn = document.getElementById('btn-convert');
+      btn.disabled = false;
+      btn.textContent = 'Chuyển đổi';
+      document.getElementById('progress-wrap').style.display = 'none';
+      document.getElementById('progress-bar').style.width = '0%';
+      document.getElementById('result-tbody').innerHTML = '';
+      document.getElementById('converted-text').value = '';
+      document.getElementById('summary-box').style.display = 'none';
+      document.getElementById('result-count').textContent = '0';
+      document.getElementById('detail-count').textContent = '0';
+      bulkResults = [];
+
+      // Reset relay server
+      try {
+        await fetch(`${RELAY_BASE}/api/reset`, { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch {}
+      checkServer();
+    }
+
+    async function checkServer() {
+      const banner = document.getElementById('banner');
+      const btn    = document.getElementById('btn-convert');
+      try {
+        const resp = await fetch(`${RELAY_BASE}/api/ping`);
+        const data = await resp.json();
+        if (data?.ok) {
+          banner.className   = 'banner banner-ok';
+          banner.textContent = '✓ Relay server sẵn sàng — Sẵn sàng chuyển đổi';
+          btn.disabled = false;
+          return;
+        }
+      } catch {}
+      banner.className   = 'banner banner-err';
+      banner.textContent = '⚠️ Không kết nối được — Relay server chưa chạy';
+      btn.disabled = true;
+    }
+
+    function withTimeout(promise, ms = 8000) {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout sau ' + ms / 1000 + 's')), ms)),
+      ]);
+    }
+
+    async function sendConvert(urls, ms) {
+      return withTimeout(fetch(`${RELAY_BASE}/api/convert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls }),
+      }).then(r => r.json()), ms);
+    }
+
+
+    // ============================================================
+    //  XỬ LÝ URL SHOPEE
+    // ============================================================
+
+    const SHOPEE_URL_RE = /https?:\/\/(?:s\.shopee\.vn|(?:[a-z]+\.)?shp\.ee|(?:www\.)?shopee\.[a-z]+(?:\.[a-z]+)?)[^\s]*/g;
+    const ANY_URL_RE    = /https?:\/\/[^\s]*/g;
+
+    function trimTrailing(url) { return url.replace(/[.,;!?)'"\]>]+$/, ''); }
+
+    function toHttps(url) { return url.replace(/^http:\/\//i, 'https://'); }
+
+    function isShopeeUrl(url) { return new RegExp('^' + SHOPEE_URL_RE.source.slice(0, -1)).test(url); }
+
+    function extractUrls(text) {
+      const re = new RegExp(ANY_URL_RE.source, 'g'), seen = new Set(), urls = [];
+      let match;
+      while ((match = re.exec(text)) !== null) {
+        const url = toHttps(trimTrailing(match[0]));
+        if (!seen.has(url)) { seen.add(url); urls.push(url); }
+      }
+      return urls;
+    }
+
+    async function resolveUrl(url) {
+      try {
+        const r = await fetch(`${RELAY_BASE}/api/resolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const data = await r.json();
+        return data.resolved || null;
+      } catch { return null; }
+    }
+
+    function buildConvertedText(originalText, linkMap) {
+      return originalText.replace(new RegExp(ANY_URL_RE.source, 'g'), (match) => {
+        const trailing = match.slice(trimTrailing(match).length);
+        const url      = toHttps(trimTrailing(match));
+        return (url in linkMap && linkMap[url] != null) ? linkMap[url] + trailing : match;
+      });
+    }
+
+
+    // Gửi tất cả URLs cùng lúc cho extension, trả về map { url → affLink | Error }
+    async function generateAffLinks(urls) {
+      const batches = Math.ceil(urls.length / 5);
+      const ms = batches * 10000; // 10s mỗi batch
+      const result = await sendConvert(urls, ms);
+      if (result?.error) throw new Error(result.error);
+      return urls.reduce((map, url) => {
+        const r = result?.results?.[url];
+        map[url] = (!r || r.error) ? new Error(r?.error || 'Không nhận được kết quả') : r.affLink;
+        return map;
+      }, {});
+    }
+
+    // ============================================================
+    //  GIAO DIỆN
+    // ============================================================
+
+    let bulkResults = [];
+
+    async function convertText() {
+      console.log('[page] convertText called');
+      const inputText = document.getElementById('input-text').value;
+      if (!inputText.trim()) {
+        console.log('[page] convertText no input');
+        return;
+      }
+
+      const allUrls = extractUrls(inputText);
+      console.log('[page] convertText urls', allUrls);
+      if (!allUrls.length) { alert('Không tìm thấy link nào.'); return; }
+
+      const tbody      = document.getElementById('result-tbody');
+      const outputSec  = document.getElementById('output-section');
+      const pWrap      = document.getElementById('progress-wrap');
+      const pBar       = document.getElementById('progress-bar');
+      const countSpan  = document.getElementById('result-count');
+      const detailSpan = document.getElementById('detail-count');
+      const btn        = document.getElementById('btn-convert');
+      const summaryBox = document.getElementById('summary-box');
+
+      tbody.innerHTML      = '';
+      bulkResults          = [];
+      outputSec.style.display  = 'block';
+      pWrap.style.display      = 'block';
+      pBar.style.width         = '0%';
+      summaryBox.style.display = 'none';
+      countSpan.textContent    = allUrls.length;
+      detailSpan.textContent   = allUrls.length;
+      btn.disabled    = true;
+      btn.textContent = 'Đang xử lý...';
+
+      allUrls.forEach((url, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${i+1}</td>
+          <td class="orig-cell">${truncate(url, 45)}</td>
+          <td>—</td>
+          <td><span class="status-badge badge-wait">Đang xử lý...</span></td>
+          <td></td>`;
+        tbody.appendChild(tr);
+      });
+
+      // Resolve non-Shopee URLs trước — tìm URL Shopee thật sự đằng sau redirect
+      // resolvedMap: originalUrl → shopeeUrl (hoặc null nếu không phải Shopee)
+      const resolvedMap = {};
+      await Promise.all(allUrls.map(async (url) => {
+        if (isShopeeUrl(url)) { resolvedMap[url] = url; return; }
+        const resolved = await resolveUrl(url);
+        resolvedMap[url] = (resolved && isShopeeUrl(resolved)) ? resolved : null;
+      }));
+
+      // Chỉ gửi các URL Shopee (gốc hoặc sau resolve) đến extension
+      const shopeeUrls = [...new Set(Object.values(resolvedMap).filter(Boolean))];
+      let affMap = {}; // shopeeUrl → affLink | Error
+      if (shopeeUrls.length) {
+        affMap = await generateAffLinks(shopeeUrls);
+      }
+
+      // Gộp kết quả: originalUrl → affLink | Error | null
+      const resultMap = {};
+      for (const url of allUrls) {
+        const shopeeUrl = resolvedMap[url];
+        if (!shopeeUrl) {
+          resultMap[url] = new Error('Không phải link Shopee');
+        } else {
+          resultMap[url] = affMap[shopeeUrl];
+        }
+      }
+
+      const linkMap = {};
+
+      allUrls.forEach((url, i) => {
+        const cells = tbody.rows[i].querySelectorAll('td');
+        const val   = resultMap[url];
+        if (val instanceof Error) {
+          linkMap[url]   = null;
+          bulkResults[i] = { original: url, affLink: null, error: val.message, ok: false };
+          cells[2].innerHTML = `<span style="color:#e53935;font-size:12px;">${val.message}</span>`;
+          cells[3].innerHTML = '<span class="status-badge badge-err">Lỗi</span>';
+        } else {
+          const unchanged = val === url;
+          linkMap[url]    = val;
+          bulkResults[i]  = { original: url, affLink: val, ok: true, unchanged };
+          cells[2].innerHTML = `<span class="link-cell">${val}</span>`;
+          cells[3].innerHTML = unchanged
+            ? '<span class="status-badge badge-warn">Không đổi</span>'
+            : '<span class="status-badge badge-ok">OK</span>';
+          cells[4].innerHTML = `<button class="btn btn-copy" onclick="copyText('${val}',this)">Copy</button>`;
+        }
+      });
+
+      pBar.style.width = '100%';
+      document.getElementById('converted-text').value = buildConvertedText(inputText, linkMap);
+      pWrap.style.display = 'none';
+      btn.disabled        = false;
+      btn.textContent     = 'Chuyển đổi';
+      showSummary();
+    }
+
+    function showSummary() {
+      const box       = document.getElementById('summary-box');
+      const errors    = bulkResults.filter(r => r && !r.ok);
+      const unchanged = bulkResults.filter(r => r && r.ok && r.unchanged);
+      if (!errors.length && !unchanged.length) {
+        box.className   = 'summary-box summary-ok';
+        box.textContent = `✓ Tất cả ${bulkResults.filter(r=>r?.ok).length} link đã chuyển đổi thành công.`;
+      } else {
+        const lines = ['⚠️ Có vấn đề:'];
+        if (errors.length)    lines.push(`• ${errors.length} link lỗi`);
+        if (unchanged.length) lines.push(`• ${unchanged.length} link không đổi`);
+        box.className = 'summary-box summary-warn';
+        box.innerHTML = lines.join('<br>');
+      }
+      box.style.display = 'block';
+    }
+
+    function clearAll() {
+      document.getElementById('input-text').value          = '';
+      document.getElementById('converted-text').value      = '';
+      document.getElementById('result-tbody').innerHTML    = '';
+      document.getElementById('summary-box').style.display = 'none';
+      document.getElementById('result-count').textContent  = '0';
+      document.getElementById('detail-count').textContent  = '0';
+      bulkResults = [];
+    }
+
+    function flashBtn(btn) {
+      const orig = btn.textContent;
+      btn.textContent = 'Đã sao chép!';
+      setTimeout(() => btn.textContent = orig, 1500);
+    }
+
+    function copyOutput(btn) {
+      const text = document.getElementById('converted-text').value;
+      if (!text) return alert('Chưa có nội dung.');
+      navigator.clipboard.writeText(text).then(() => flashBtn(btn));
+    }
+
+    function exportCsv() {
+      if (!bulkResults.length) return;
+      const rows = [['#','Link gốc','Link aff','Trạng thái']];
+      bulkResults.forEach((r,i) => {
+        if (r) rows.push([i+1, r.original, r.affLink||'', r.ok ? 'OK' : r.error]);
+      });
+      const csv  = rows.map(r => r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const blob = new Blob(['﻿'+csv], { type: 'text/csv;charset=utf-8' });
+      const a    = document.createElement('a');
+      a.href     = URL.createObjectURL(blob);
+      a.download = 'shopee-aff-links.csv';
+      a.click();
+    }
+
+    function copyText(text, btn) {
+      navigator.clipboard.writeText(text).then(() => flashBtn(btn));
+    }
+
+    function truncate(str, n) { return str.length > n ? str.slice(0, n) + '…' : str; }
+    function sleep(ms)        { return new Promise(r => setTimeout(r, ms)); }
+
+    // Kiểm tra server ngay khi tải trang
+    checkServer();
+  </script>
+</body>
+</html>
