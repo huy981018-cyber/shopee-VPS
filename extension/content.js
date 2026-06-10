@@ -66,11 +66,6 @@ async function convertAllViaPageUi(urls) {
   clickTarget.focus();
   simulateUserClick(clickTarget);
 
-  // If click did not trigger anything, fallback to form submit when available.
-  if (inputField.form && typeof inputField.form.requestSubmit === 'function') {
-    inputField.form.requestSubmit();
-  }
-
   const newLinks = await waitForNewLinks(urls.length, existingLinks);
   console.log('[content] page UI got new links', newLinks);
 
@@ -201,12 +196,15 @@ function getClickableElement(el) {
 function simulateUserClick(el) {
   if (!(el instanceof Element)) return;
   const opts = { bubbles: true, cancelable: true, view: window };
+
+  if (typeof el.click === 'function') {
+    el.click();
+    return;
+  }
+
   ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
     el.dispatchEvent(new MouseEvent(type, opts));
   });
-  if (typeof el.click === 'function') {
-    el.click();
-  }
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
