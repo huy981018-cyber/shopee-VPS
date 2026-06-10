@@ -59,19 +59,10 @@ async function convertAllViaPageUi(urls) {
   inputField.dispatchEvent(new Event('input', { bubbles: true }));
   inputField.dispatchEvent(new Event('change', { bubbles: true }));
 
-  // Nếu page đã tự động chuyển link khi input thay đổi, không click lại
-  let newLinks = [];
-  for (let i = 0; i < 5; i += 1) {
-    await sleep(200);
-    newLinks = collectAllShortLinks().filter(l => !existingLinks.has(l));
-    if (newLinks.length >= urls.length) break;
-  }
-  if (newLinks.length < urls.length) {
-    button.click();
-    newLinks = await waitForNewLinks(urls.length, existingLinks);
-  } else {
-    newLinks = newLinks.slice(0, urls.length);
-  }
+  // Shopee chỉ chuyển link sau khi bấm nút; chỉ click một lần
+  console.log('[content] clicking convert button');
+  button.click();
+  const newLinks = await waitForNewLinks(urls.length, existingLinks);
 
   console.log('[content] page UI got new links', newLinks);
 
@@ -94,17 +85,29 @@ async function convertAllViaPageUi(urls) {
 
 function waitForNewLinks(count, existingLinks) {
   return new Promise(resolve => {
-    const timeout = setTimeout(() => {
+    let lastLinks = [];
+    let stableTimer = null;
+
+    const finish = () => {
       observer.disconnect();
-      resolve(collectAllShortLinks().filter(l => !existingLinks.has(l)));
+      clearTimeout(timeout);
+      clearTimeout(stableTimer);
+      resolve(lastLinks.slice(-count));
+    };
+
+    const timeout = setTimeout(() => {
+      clearTimeout(stableTimer);
+      finish();
     }, 8000);
 
     const check = () => {
       const all = collectAllShortLinks().filter(l => !existingLinks.has(l));
-      if (all.length >= count) {
-        clearTimeout(timeout);
-        observer.disconnect();
-        resolve(all.slice(0, count));
+      if (all.length > 0) {
+        lastLinks = Array.from(new Set(all));
+      }
+      if (lastLinks.length >= count) {
+        clearTimeout(stableTimer);
+        stableTimer = setTimeout(finish, 500);
       }
     };
 
@@ -151,8 +154,17 @@ function findAffiliateInputField() {
 
 function findAffiliateSubmitButton() {
   const buttons = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit]'));
-  return buttons.find(b => /chuyển đổi|lấy link|tạo link|sao chép|copy/i.test(b.textContent || b.value || ''))
-    || buttons.find(b => /submit|convert|tạo|generate/i.test(b.textContent || b.value || ''));
+  const label = b => (b.textContent || b.value || '').trim();
+  const hasPrimaryAction = text => /chuyển đổi|lấy link|tạo link|convert|generate/i.test(text);
+  const isCopy = text => /copy|sao chép|sao-chep|copy link|copyurl/i.test(text);
+
+  return buttons.find(b => {
+    const text = label(b);
+    return hasPrimaryAction(text) && !isCopy(text);
+  }) || buttons.find(b => {
+    const text = label(b);
+    return /submit|convert|generate/i.test(text) && !isCopy(text);
+  });
 }
 
 function getCleanText(el) {
