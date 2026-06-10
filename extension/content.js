@@ -104,7 +104,7 @@ function waitForNewLinks(count, existingLinks) {
 }
 
 function collectAllShortLinks() {
-  const pattern = /https?:\/\/(?:s\.shopee\.vn|shope\.ee|shp\.ee)\/[A-Za-z0-9]+/g;
+  const pattern = /https?:\/\/s\.shopee\.vn\/[A-Za-z0-9]+/g;
   const seen = new Set();
   const links = [];
   // Ưu tiên tìm trong dialog/modal trước, sau đó toàn trang
@@ -140,8 +140,8 @@ function findAffiliateInputField() {
 
 function findAffiliateSubmitButton() {
   const buttons = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit]'));
-  return buttons.find(b => /chuyển đổi|lấy link|tạo link|convert|generate/i.test(b.textContent || b.value || ''))
-    || buttons.find(b => /submit|convert|generate/i.test(b.textContent || b.value || ''));
+  return buttons.find(b => /chuyển đổi|lấy link|tạo link|sao chép|copy/i.test(b.textContent || b.value || ''))
+    || buttons.find(b => /submit|convert|tạo|generate/i.test(b.textContent || b.value || ''));
 }
 
 function getCleanText(el) {
