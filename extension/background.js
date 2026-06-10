@@ -126,6 +126,29 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } catch (e) {}
 });
 
+// Poll command queue every second
+async function commandLoop() {
+  while (true) {
+    try {
+      const resp = await fetch(`${RELAY}/api/commands`);
+      if (resp.ok) {
+        const data = await resp.json();
+        for (const cmd of data.commands || []) {
+          if (cmd.action === 'reload_custom_link') {
+            const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/offer/custom_link' });
+            for (const tab of tabs) {
+              if (tab.id != null) await chrome.tabs.reload(tab.id);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[background] commandLoop error', e);
+    }
+    await sleep(1000);
+  }
+}
+
 // Heartbeat mỗi 5s
 async function heartbeatLoop() {
   while (true) {
@@ -143,3 +166,4 @@ async function heartbeatLoop() {
 
 relayLoop();
 heartbeatLoop();
+commandLoop();

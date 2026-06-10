@@ -5,6 +5,7 @@ import json, threading, os, time, urllib.request, subprocess, sys
 jobs = {}
 results = {}
 result_events = {}
+commands = []
 lock = threading.Lock()
 new_job_event = threading.Event()
 counter = [0]
@@ -56,6 +57,12 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 new_job_event.wait(timeout=min(remaining, 1.0))
                 new_job_event.clear()
+
+        elif self.path == '/api/commands':
+            with lock:
+                queued = list(commands)
+                commands.clear()
+            self._json(200, {'commands': queued})
 
         elif self.path == '/' or self.path == '/index.html':
             self.path = '/index.html'
@@ -120,6 +127,15 @@ class Handler(SimpleHTTPRequestHandler):
                 results.clear()
                 result_events.clear()
             self._json(200, {'ok': True})
+
+        elif self.path == '/api/command':
+            command = body
+            if isinstance(command, dict) and command.get('action'):
+                with lock:
+                    commands.append(command)
+                self._json(200, {'ok': True})
+            else:
+                self._json(400, {'ok': False, 'error': 'Invalid command'})
 
         elif self.path == '/api/reload-custom-link':
             try:

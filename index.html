@@ -159,6 +159,15 @@
         });
       } catch {}
 
+      // Tell extension to reload custom_link tab
+      try {
+        await fetch(`${RELAY_BASE}/api/command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reload_custom_link' }),
+        });
+      } catch (e) { console.log('send reload command failed:', e); }
+
       // Restart server
       try {
         await fetch(`${RELAY_BASE}/api/restart`, { 

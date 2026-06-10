@@ -10,8 +10,8 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 RESTART_INTERVAL=1800  # 30 phút
-RELOAD_MIN=600         # 10 phút
-RELOAD_MAX=900         # 15 phút
+RELOAD_MIN=1500        # 25 phút
+RELOAD_MAX=1800        # 30 phút
 
 while true; do
     echo "[$(date '+%H:%M:%S')] Dừng các tiến trình cũ..."
