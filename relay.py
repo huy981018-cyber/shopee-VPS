@@ -1,11 +1,10 @@
 from http.server import SimpleHTTPRequestHandler
 from socketserver import ThreadingTCPServer
-import json, threading, os, time, urllib.request, subprocess, sys
+import json, threading, os, time
 
 jobs = {}
 results = {}
 result_events = {}
-commands = []
 lock = threading.Lock()
 new_job_event = threading.Event()
 counter = [0]
@@ -58,16 +57,6 @@ class Handler(SimpleHTTPRequestHandler):
                 new_job_event.wait(timeout=min(remaining, 1.0))
                 new_job_event.clear()
 
-        elif self.path == '/api/commands':
-            with lock:
-                queued = list(commands)
-                commands.clear()
-            self._json(200, {'commands': queued})
-
-        elif self.path == '/' or self.path == '/index.html':
-            self.path = '/index.html'
-            super().do_GET()
-
         else:
             super().do_GET()
 
@@ -83,7 +72,7 @@ class Handler(SimpleHTTPRequestHandler):
         elif self.path == '/api/convert':
             urls = body['urls']
             batches = max(1, (len(urls) + 4) // 5)
-            timeout = batches * 12
+            timeout = batches * 12  # 12s mỗi batch
             with lock:
                 counter[0] += 1
                 job_id = str(counter[0])
@@ -108,17 +97,6 @@ class Handler(SimpleHTTPRequestHandler):
                 ev.set()
             self._json(200, {'ok': True})
 
-        elif self.path == '/api/resolve':
-            url = body.get('url', '')
-            try:
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'}, method='HEAD')
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    resolved = resp.url
-            except Exception as e:
-                self._json(200, {'error': str(e)})
-                return
-            self._json(200, {'resolved': resolved})
-
         elif self.path == '/api/reset':
             with lock:
                 for ev in result_events.values():
@@ -127,30 +105,6 @@ class Handler(SimpleHTTPRequestHandler):
                 results.clear()
                 result_events.clear()
             self._json(200, {'ok': True})
-
-        elif self.path == '/api/command':
-            command = body
-            if isinstance(command, dict) and command.get('action'):
-                with lock:
-                    commands.append(command)
-                self._json(200, {'ok': True})
-            else:
-                self._json(400, {'ok': False, 'error': 'Invalid command'})
-
-        elif self.path == '/api/reload-custom-link':
-            try:
-                subprocess.run(['xdotool', 'search', '--name', 'custom_link', 'key', 'F5'], 
-                               timeout=5, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-                self._json(200, {'ok': True, 'message': 'Reload custom_link thành công'})
-            except Exception as e:
-                self._json(200, {'ok': False, 'error': str(e)})
-
-        elif self.path == '/api/restart':
-            try:
-                self._json(200, {'ok': True, 'message': 'Server sẽ restart...'})
-                threading.Timer(0.5, lambda: os.execv(sys.executable, [sys.executable] + sys.argv)).start()
-            except Exception as e:
-                self._json(200, {'ok': False, 'error': str(e)})
 
     def send_response(self, code, message=None):
         super().send_response(code, message)
@@ -195,5 +149,5 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 ThreadingTCPServer.allow_reuse_address = True
 ThreadingTCPServer.daemon_threads = True
 threading.Thread(target=cleanup_loop, daemon=True).start()
-print('Server running on http://0.0.0.0:8080')
+print('Server running on http://localhost:8080')
 ThreadingTCPServer(('0.0.0.0', 8080), Handler).serve_forever()
