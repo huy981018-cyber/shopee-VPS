@@ -131,8 +131,8 @@
     async function resetAll() {
       // Reset UI
       const btn = document.getElementById('btn-convert');
-      btn.disabled = false;
-      btn.textContent = 'Chuyển đổi';
+      btn.disabled = true;
+      btn.textContent = 'Đang reset...';
       document.getElementById('progress-wrap').style.display = 'none';
       document.getElementById('progress-bar').style.width = '0%';
       document.getElementById('result-tbody').innerHTML = '';
@@ -142,6 +142,15 @@
       document.getElementById('detail-count').textContent = '0';
       bulkResults = [];
 
+      // Reload custom_link tab
+      try {
+        await fetch(`${RELAY_BASE}/api/reload-custom-link`, { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch (e) { console.log('Reload custom_link failed:', e); }
+
       // Reset relay server
       try {
         await fetch(`${RELAY_BASE}/api/reset`, { method: 'POST',
@@ -149,6 +158,21 @@
           body: JSON.stringify({}),
         });
       } catch {}
+
+      // Restart server
+      try {
+        await fetch(`${RELAY_BASE}/api/restart`, { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch (e) { console.log('Restart failed:', e); }
+
+      // Wait a bit for server to restart
+      await sleep(2000);
+      
+      btn.disabled = false;
+      btn.textContent = 'Chuyển đổi';
       checkServer();
     }
 

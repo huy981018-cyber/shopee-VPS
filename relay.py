@@ -1,6 +1,6 @@
 from http.server import SimpleHTTPRequestHandler
 from socketserver import ThreadingTCPServer
-import json, threading, os, time, urllib.request
+import json, threading, os, time, urllib.request, subprocess, sys
 
 jobs = {}
 results = {}
@@ -120,6 +120,21 @@ class Handler(SimpleHTTPRequestHandler):
                 results.clear()
                 result_events.clear()
             self._json(200, {'ok': True})
+
+        elif self.path == '/api/reload-custom-link':
+            try:
+                subprocess.run(['xdotool', 'search', '--name', 'custom_link', 'key', 'F5'], 
+                               timeout=5, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+                self._json(200, {'ok': True, 'message': 'Reload custom_link thành công'})
+            except Exception as e:
+                self._json(200, {'ok': False, 'error': str(e)})
+
+        elif self.path == '/api/restart':
+            try:
+                self._json(200, {'ok': True, 'message': 'Server sẽ restart...'})
+                threading.Timer(0.5, lambda: os.execv(sys.executable, [sys.executable] + sys.argv)).start()
+            except Exception as e:
+                self._json(200, {'ok': False, 'error': str(e)})
 
     def send_response(self, code, message=None):
         super().send_response(code, message)
