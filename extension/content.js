@@ -85,7 +85,7 @@ function waitForNewLinks(count, existingLinks) {
   return new Promise(resolve => {
     const timeout = setTimeout(() => {
       observer.disconnect();
-      resolve(collectAllShortLinks().filter(l => !existingLinks.has(l)));
+      resolve(collectAllShortLinks().filter(l => !existingLinks.has(l)).slice(0, count));
     }, 8000);
 
     const check = () => {
