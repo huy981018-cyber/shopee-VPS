@@ -56,21 +56,11 @@ async function convertAllViaPageUi(urls) {
 
   inputField.focus();
   inputField.value = urls.join('\n');
-  inputField.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true }));
   inputField.dispatchEvent(new Event('input', { bubbles: true }));
-  inputField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true }));
   inputField.dispatchEvent(new Event('change', { bubbles: true }));
-  inputField.dispatchEvent(new Event('blur', { bubbles: true }));
+  button.click();
 
-  await sleep(150);
-  const clickTarget = getClickableElement(button);
-  if (!clickTarget) throw new Error('Không tìm thấy nút chuyển đổi');
-  console.log('[content] found input field', inputField, 'submit button', button, 'click target', clickTarget);
-  console.log('[content] clicking convert button once');
-  clickTarget.scrollIntoView({ block: 'center', inline: 'center' });
-  clickTarget.focus();
-  simulateUserClick(clickTarget);
-
+  // Chờ N link mới xuất hiện (không tính link cũ)
   const newLinks = await waitForNewLinks(urls.length, existingLinks);
   console.log('[content] page UI got new links', newLinks);
 
@@ -93,29 +83,17 @@ async function convertAllViaPageUi(urls) {
 
 function waitForNewLinks(count, existingLinks) {
   return new Promise(resolve => {
-    let lastLinks = [];
-    let stableTimer = null;
-
-    const finish = () => {
-      observer.disconnect();
-      clearTimeout(timeout);
-      clearTimeout(stableTimer);
-      resolve(lastLinks.slice(-count));
-    };
-
     const timeout = setTimeout(() => {
-      clearTimeout(stableTimer);
-      finish();
+      observer.disconnect();
+      resolve(collectAllShortLinks().filter(l => !existingLinks.has(l)));
     }, 8000);
 
     const check = () => {
       const all = collectAllShortLinks().filter(l => !existingLinks.has(l));
-      if (all.length > 0) {
-        lastLinks = Array.from(new Set(all));
-      }
-      if (lastLinks.length >= count) {
-        clearTimeout(stableTimer);
-        stableTimer = setTimeout(finish, 500);
+      if (all.length >= count) {
+        clearTimeout(timeout);
+        observer.disconnect();
+        resolve(all.slice(0, count));
       }
     };
 
@@ -172,28 +150,6 @@ function getCleanText(el) {
     .filter(n => n.nodeType === Node.TEXT_NODE)
     .map(n => n.textContent)
     .join(' ');
-}
-
-function getClickableElement(el) {
-  if (!(el instanceof Element)) return el;
-  const tag = el.tagName.toLowerCase();
-  if (tag === 'button' || tag === 'input') return el;
-  return el.closest('button, input[type=button], input[type=submit]') || el;
-}
-
-function simulateUserClick(el) {
-  if (!(el instanceof Element)) return;
-  const opts = { bubbles: true, cancelable: true, view: window };
-  ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(type => {
-    el.dispatchEvent(new MouseEvent(type, opts));
-  });
-}
-
-function isElementEnabled(el) {
-  if (!el || !(el instanceof Element)) return false;
-  if (el.disabled) return false;
-  if (el.getAttribute('aria-disabled') === 'true') return false;
-  return el.offsetParent !== null || el.getClientRects().length > 0;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
