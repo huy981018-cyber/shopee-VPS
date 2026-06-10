@@ -214,14 +214,14 @@
     //  XỬ LÝ URL SHOPEE
     // ============================================================
 
-    const SHOPEE_URL_RE = /https?:\/\/(?:s\.shopee\.vn|(?:[a-z]+\.)?shp\.ee|(?:www\.)?shopee\.[a-z]+(?:\.[a-z]+)?)[^\s]*/g;
+    const SHOPEE_URL_RE = /https?:\/\/(?:s\.shopee\.vn|(?:[a-z]+\.)?shp\.ee|(?:www\.)?shopee\.[a-z]+(?:\.[a-z]+)?)[^\s]*/;
     const ANY_URL_RE    = /https?:\/\/[^\s]*/g;
 
     function trimTrailing(url) { return url.replace(/[.,;!?)'"\]>]+$/, ''); }
 
     function toHttps(url) { return url.replace(/^http:\/\//i, 'https://'); }
 
-    function isShopeeUrl(url) { return new RegExp('^' + SHOPEE_URL_RE.source.slice(0, -1)).test(url); }
+    function isShopeeUrl(url) { return SHOPEE_URL_RE.test(url); }
 
     function extractUrls(text) {
       const re = new RegExp(ANY_URL_RE.source, 'g'), seen = new Set(), urls = [];
