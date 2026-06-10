@@ -59,8 +59,12 @@ async function convertAllViaPageUi(urls) {
   inputField.dispatchEvent(new Event('input', { bubbles: true }));
   inputField.dispatchEvent(new Event('change', { bubbles: true }));
 
-  const clickTarget = getClickableElement(button);
-  console.log('[content] found input field', inputField, 'submit button', button, 'click target', clickTarget);
+  await sleep(150);
+  const readyButton = await waitForReadySubmitButton(2000);
+  if (!readyButton) throw new Error('Không tìm thấy nút chuyển đổi hoặc nút chưa sẵn sàng');
+
+  const clickTarget = getClickableElement(readyButton);
+  console.log('[content] found input field', inputField, 'submit button', readyButton, 'click target', clickTarget);
   console.log('[content] clicking convert button once');
   clickTarget.scrollIntoView({ block: 'center', inline: 'center' });
   clickTarget.focus();
@@ -205,6 +209,24 @@ function simulateUserClick(el) {
   ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
     el.dispatchEvent(new MouseEvent(type, opts));
   });
+}
+
+function isElementEnabled(el) {
+  if (!el || !(el instanceof Element)) return false;
+  if (el.disabled) return false;
+  if (el.getAttribute('aria-disabled') === 'true') return false;
+  return el.offsetParent !== null || el.getClientRects().length > 0;
+}
+
+async function waitForReadySubmitButton(timeoutMs = 2000) {
+  const start = Date.now();
+  let button = findAffiliateSubmitButton();
+  while (Date.now() - start < timeoutMs) {
+    if (button && isElementEnabled(button)) return button;
+    await sleep(100);
+    button = findAffiliateSubmitButton();
+  }
+  return button && isElementEnabled(button) ? button : null;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
