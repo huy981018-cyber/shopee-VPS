@@ -1,6 +1,6 @@
 from http.server import SimpleHTTPRequestHandler
 from socketserver import ThreadingTCPServer
-import json, threading, os, time
+import json, threading, os, time, re, urllib.request, urllib.error, urllib.parse
 
 jobs = {}
 results = {}
@@ -10,6 +10,43 @@ new_job_event = threading.Event()
 counter = [0]
 last_heartbeat = [0.0]
 affiliate_tab_ok = [None]
+
+SHOPEE_URL_RE = re.compile(r'https?://(?:s\.shopee\.vn|(?:[a-z]+\.)?shp\.ee|(?:www\.)?shopee\.[a-z]+(?:\.[a-z]+)?)[^\s"\']*', re.I)
+
+
+def is_shopee_url(url):
+    return bool(url and SHOPEE_URL_RE.match(url))
+
+
+def find_shopee_link(text):
+    if not text:
+        return None
+    m = SHOPEE_URL_RE.search(text)
+    return m.group(0) if m else None
+
+
+def resolve_url(url, timeout=12):
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            final_url = resp.geturl()
+            if is_shopee_url(final_url):
+                return final_url
+            body = resp.read(32768).decode('utf-8', errors='ignore')
+            shopee_link = find_shopee_link(body)
+            if shopee_link:
+                return shopee_link
+            meta = re.search(r'<meta[^>]+http-equiv=["\']?refresh["\']?[^>]+content=["\']?(?:\d+;\s*url=)?([^"\'>]+)', body, re.I)
+            if meta:
+                candidate = urllib.parse.urljoin(final_url, meta.group(1).strip())
+                if is_shopee_url(candidate):
+                    return candidate
+            return final_url if final_url != url else None
+    except Exception:
+        return None
 
 class Handler(SimpleHTTPRequestHandler):
     def send_head(self):
@@ -68,6 +105,14 @@ class Handler(SimpleHTTPRequestHandler):
             last_heartbeat[0] = time.time()
             affiliate_tab_ok[0] = body.get('affiliate_tab')
             self._json(200, {'ok': True})
+
+        elif self.path == '/api/resolve':
+            url = body.get('url')
+            if not url:
+                self._json(400, {'error': 'Missing url'})
+                return
+            resolved = resolve_url(url)
+            self._json(200, {'resolved': resolved})
 
         elif self.path == '/api/convert':
             urls = body['urls']
