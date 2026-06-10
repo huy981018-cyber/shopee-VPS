@@ -168,6 +168,9 @@
         });
       } catch (e) { console.log('send reload command failed:', e); }
 
+      // Wait a bit so extension can fetch the reload command before restart.
+      await sleep(1500);
+
       // Restart server
       try {
         await fetch(`${RELAY_BASE}/api/restart`, { 

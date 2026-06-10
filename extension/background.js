@@ -18,7 +18,7 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 chrome.tabs.onRemoved.addListener(tabId => injectedTabs.delete(tabId));
 
-const COMMAND_POLL_INTERVAL_MS = 3000;
+const COMMAND_POLL_INTERVAL_MS = 1000;
 
 async function relayLoop() {
   while (true) {
