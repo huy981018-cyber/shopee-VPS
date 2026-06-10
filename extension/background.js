@@ -45,6 +45,7 @@ async function commandLoop() {
       if (resp.ok) {
         const data = await resp.json();
         if (Array.isArray(data.commands) && data.commands.length) {
+          console.log('[background] received commands', data.commands);
           await handleCommands(data.commands);
         }
       }
@@ -65,9 +66,10 @@ async function handleCommands(commands) {
 
 async function reloadCustomLinkTab() {
   try {
-    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/offer/custom_link' });
-    if (tabs.length) {
-      for (const tab of tabs) {
+    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+    const customTabs = tabs.filter(tab => tab.url && tab.url.includes('/offer/custom_link'));
+    if (customTabs.length) {
+      for (const tab of customTabs) {
         if (tab.id != null) await chrome.tabs.reload(tab.id);
       }
       return;
