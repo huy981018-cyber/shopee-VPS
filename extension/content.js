@@ -59,15 +59,16 @@ async function convertAllViaPageUi(urls) {
   inputField.dispatchEvent(new Event('input', { bubbles: true }));
   inputField.dispatchEvent(new Event('change', { bubbles: true }));
 
-  console.log('[content] found input field', inputField, 'submit button', button);
+  const clickTarget = getClickableElement(button);
+  console.log('[content] found input field', inputField, 'submit button', button, 'click target', clickTarget);
   console.log('[content] clicking convert button once');
-  button.scrollIntoView({ block: 'center', inline: 'center' });
-  button.focus();
-  if (typeof button.click === 'function') {
-    button.click();
-  } else {
-    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-    button.dispatchEvent(clickEvent);
+  clickTarget.scrollIntoView({ block: 'center', inline: 'center' });
+  clickTarget.focus();
+  simulateUserClick(clickTarget);
+
+  // If click did not trigger anything, fallback to form submit when available.
+  if (inputField.form && typeof inputField.form.requestSubmit === 'function') {
+    inputField.form.requestSubmit();
   }
 
   const newLinks = await waitForNewLinks(urls.length, existingLinks);
@@ -190,5 +191,22 @@ function getCleanText(el) {
     .join(' ');
 }
 
+function getClickableElement(el) {
+  if (!(el instanceof Element)) return el;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'button' || tag === 'a' || tag === 'input') return el;
+  return el.closest('button, input[type=button], input[type=submit], a, [role=button]') || el;
+}
+
+function simulateUserClick(el) {
+  if (!(el instanceof Element)) return;
+  const opts = { bubbles: true, cancelable: true, view: window };
+  ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+    el.dispatchEvent(new MouseEvent(type, opts));
+  });
+  if (typeof el.click === 'function') {
+    el.click();
+  }
+}
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
