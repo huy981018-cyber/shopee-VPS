@@ -18,6 +18,8 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 chrome.tabs.onRemoved.addListener(tabId => injectedTabs.delete(tabId));
 
+const COMMAND_POLL_INTERVAL_MS = 3000;
+
 async function relayLoop() {
   while (true) {
     try {
@@ -33,6 +35,46 @@ async function relayLoop() {
     } catch {
       await sleep(1000);
     }
+  }
+}
+
+async function commandLoop() {
+  while (true) {
+    try {
+      const resp = await fetch(`${RELAY}/api/command`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data.commands) && data.commands.length) {
+          await handleCommands(data.commands);
+        }
+      }
+    } catch (e) {
+      console.warn('[background] commandLoop error', e);
+    }
+    await sleep(COMMAND_POLL_INTERVAL_MS);
+  }
+}
+
+async function handleCommands(commands) {
+  for (const cmd of commands) {
+    if (cmd.action === 'reload_custom_link') {
+      await reloadCustomLinkTab();
+    }
+  }
+}
+
+async function reloadCustomLinkTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/offer/custom_link' });
+    if (tabs.length) {
+      for (const tab of tabs) {
+        if (tab.id != null) await chrome.tabs.reload(tab.id);
+      }
+      return;
+    }
+    await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
+  } catch (e) {
+    console.warn('[background] reloadCustomLinkTab failed', e);
   }
 }
 
@@ -148,4 +190,5 @@ async function heartbeatLoop() {
 }
 
 relayLoop();
+commandLoop();
 heartbeatLoop();

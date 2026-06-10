@@ -10,6 +10,7 @@ new_job_event = threading.Event()
 counter = [0]
 last_heartbeat = [0.0]
 affiliate_tab_ok = [None]
+pending_commands = []
 
 SHOPEE_URL_RE = re.compile(r'https?://(?:s\.shopee\.vn|(?:[a-z]+\.)?shp\.ee|(?:www\.)?shopee\.[a-z]+(?:\.[a-z]+)?)[^\s"\']*', re.I)
 
@@ -94,6 +95,12 @@ class Handler(SimpleHTTPRequestHandler):
                 new_job_event.wait(timeout=min(remaining, 1.0))
                 new_job_event.clear()
 
+        elif self.path == '/api/command':
+            with lock:
+                commands = list(pending_commands)
+                pending_commands.clear()
+            self._json(200, {'commands': commands})
+
         else:
             super().do_GET()
 
@@ -113,6 +120,26 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             resolved = resolve_url(url)
             self._json(200, {'resolved': resolved})
+
+        elif self.path == '/api/reload-custom-link':
+            with lock:
+                pending_commands.append({'action': 'reload_custom_link'})
+            self._json(200, {'ok': True})
+
+        elif self.path == '/api/command':
+            action = body.get('action')
+            if action == 'reload_custom_link':
+                with lock:
+                    pending_commands.append({'action': 'reload_custom_link'})
+                self._json(200, {'ok': True})
+            else:
+                self._json(400, {'error': 'Unsupported action'})
+
+        elif self.path == '/api/restart':
+            with lock:
+                pending_commands.append({'action': 'restart'})
+            self._json(200, {'ok': True})
+            os._exit(0)
 
         elif self.path == '/api/convert':
             urls = body['urls']
