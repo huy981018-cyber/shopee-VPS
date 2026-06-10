@@ -168,19 +168,7 @@
         });
       } catch (e) { console.log('send reload command failed:', e); }
 
-      // Wait a bit so extension can fetch the reload command before restart.
-      await sleep(1500);
-
-      // Restart server
-      try {
-        await fetch(`${RELAY_BASE}/api/restart`, { 
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-      } catch (e) { console.log('Restart failed:', e); }
-
-      // Wait a bit for server to restart
+      // Wait a bit for the reload command to be processed
       await sleep(2000);
       
       btn.disabled = false;

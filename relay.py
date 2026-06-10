@@ -11,7 +11,6 @@ counter = [0]
 last_heartbeat = [0.0]
 affiliate_tab_ok = [None]
 pending_commands = []
-restart_requested = [False]
 
 SHOPEE_URL_RE = re.compile(r'https?://(?:s\.shopee\.vn|(?:[a-z]+\.)?shp\.ee|(?:www\.)?shopee\.[a-z]+(?:\.[a-z]+)?)[^\s"\']*', re.I)
 
@@ -136,12 +135,6 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 self._json(400, {'error': 'Unsupported action'})
 
-        elif self.path == '/api/restart':
-            with lock:
-                restart_requested[0] = True
-                pending_commands.append({'action': 'restart'})
-            self._json(200, {'ok': True})
-
         elif self.path == '/api/convert':
             urls = body['urls']
             batches = max(1, (len(urls) + 4) // 5)
@@ -219,18 +212,9 @@ def cleanup_loop():
                     ev.set()
 
 
-def restart_loop():
-    while True:
-        time.sleep(1)
-        if restart_requested[0]:
-            print('Restart requested, exiting in 3 seconds...')
-            time.sleep(3)
-            os._exit(0)
-
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 ThreadingTCPServer.allow_reuse_address = True
 ThreadingTCPServer.daemon_threads = True
 threading.Thread(target=cleanup_loop, daemon=True).start()
-threading.Thread(target=restart_loop, daemon=True).start()
 print('Server running on http://localhost:8080')
 ThreadingTCPServer(('0.0.0.0', 8080), Handler).serve_forever()
