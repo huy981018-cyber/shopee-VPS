@@ -47,7 +47,9 @@ while true; do
 
         if kill -0 "$RELAY_PID" 2>/dev/null; then
             echo "[$(date '+%H:%M:%S')] Reload tab custom_link..."
-            xdotool search --name "custom_link" key F5 2>/dev/null || true
+            curl -s -X POST http://localhost:8000/api/reload-custom-link \
+              -H "Content-Type: application/json" \
+              -d '{}' 2>/dev/null || true
         fi
     done
 
