@@ -56,15 +56,16 @@ async function convertAllViaPageUi(urls) {
 
   inputField.focus();
   inputField.value = urls.join('\n');
+  inputField.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true }));
   inputField.dispatchEvent(new Event('input', { bubbles: true }));
+  inputField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true }));
   inputField.dispatchEvent(new Event('change', { bubbles: true }));
+  inputField.dispatchEvent(new Event('blur', { bubbles: true }));
 
   await sleep(150);
-  const readyButton = await waitForReadySubmitButton(2000);
-  if (!readyButton) throw new Error('Không tìm thấy nút chuyển đổi hoặc nút chưa sẵn sàng');
-
-  const clickTarget = getClickableElement(readyButton);
-  console.log('[content] found input field', inputField, 'submit button', readyButton, 'click target', clickTarget);
+  const clickTarget = getClickableElement(button);
+  if (!clickTarget) throw new Error('Không tìm thấy nút chuyển đổi');
+  console.log('[content] found input field', inputField, 'submit button', button, 'click target', clickTarget);
   console.log('[content] clicking convert button once');
   clickTarget.scrollIntoView({ block: 'center', inline: 'center' });
   clickTarget.focus();
@@ -160,26 +161,9 @@ function findAffiliateInputField() {
 }
 
 function findAffiliateSubmitButton() {
-  const elements = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit], a[role=button], [role=button], a, span, div'));
-  const label = el => (el.textContent || el.value || '').trim();
-  const isVisible = el => el.offsetParent !== null || el.getClientRects().length > 0;
-  const hasPrimaryAction = text => /chuyển đổi|lấy link|tạo link|convert|generate|đổi link/i.test(text);
-  const isCopy = text => /copy|sao chép|sao-chep|copy link|copyurl/i.test(text);
-  const scored = el => {
-    const text = label(el);
-    if (!text || !isVisible(el)) return -1;
-    if (isCopy(text)) return -1;
-    if (hasPrimaryAction(text)) return 10;
-    if (/submit|convert|generate|đổi|lấy/i.test(text)) return 5;
-    return -1;
-  };
-
-  const candidates = elements
-    .map(el => ({ el, score: scored(el) }))
-    .filter(item => item.score >= 0)
-    .sort((a, b) => b.score - a.score);
-
-  return candidates.length ? candidates[0].el : null;
+  const buttons = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit]'));
+  return buttons.find(b => /chuyển đổi|lấy link|tạo link|convert|generate/i.test(b.textContent || b.value || ''))
+    || buttons.find(b => /submit|convert|generate/i.test(b.textContent || b.value || ''));
 }
 
 function getCleanText(el) {
@@ -193,20 +177,14 @@ function getCleanText(el) {
 function getClickableElement(el) {
   if (!(el instanceof Element)) return el;
   const tag = el.tagName.toLowerCase();
-  if (tag === 'button' || tag === 'a' || tag === 'input') return el;
-  return el.closest('button, input[type=button], input[type=submit], a, [role=button]') || el;
+  if (tag === 'button' || tag === 'input') return el;
+  return el.closest('button, input[type=button], input[type=submit]') || el;
 }
 
 function simulateUserClick(el) {
   if (!(el instanceof Element)) return;
   const opts = { bubbles: true, cancelable: true, view: window };
-
-  if (typeof el.click === 'function') {
-    el.click();
-    return;
-  }
-
-  ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+  ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(type => {
     el.dispatchEvent(new MouseEvent(type, opts));
   });
 }
@@ -216,17 +194,6 @@ function isElementEnabled(el) {
   if (el.disabled) return false;
   if (el.getAttribute('aria-disabled') === 'true') return false;
   return el.offsetParent !== null || el.getClientRects().length > 0;
-}
-
-async function waitForReadySubmitButton(timeoutMs = 2000) {
-  const start = Date.now();
-  let button = findAffiliateSubmitButton();
-  while (Date.now() - start < timeoutMs) {
-    if (button && isElementEnabled(button)) return button;
-    await sleep(100);
-    button = findAffiliateSubmitButton();
-  }
-  return button && isElementEnabled(button) ? button : null;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
