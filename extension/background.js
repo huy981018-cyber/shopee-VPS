@@ -3,7 +3,13 @@
 //  Chrome và relay.py chạy cùng máy → poll localhost trực tiếp
 // ============================================================
 
-const RELAY = 'http://localhost:8080';
+let RELAY = 'http://localhost:8080';
+
+// Load RELAY URL từ storage (cho phép thay đổi động cho GCP IP)
+chrome.storage.sync.get('relayUrl', (data) => {
+  if (data.relayUrl) RELAY = data.relayUrl;
+  console.log('[background] RELAY URL:', RELAY);
+});
 const activeJobs = new Set();
 const injectedTabs = new Set();
 
@@ -21,7 +27,7 @@ async function relayLoop() {
       for (const [jobId, job] of Object.entries(jobs)) {
         if (!activeJobs.has(jobId)) {
           activeJobs.add(jobId);
-          processRelayJob(jobId, job.urls ?? job);
+          await processRelayJob(jobId, job.urls ?? job);
         }
       }
     } catch {
@@ -126,29 +132,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } catch (e) {}
 });
 
-// Poll command queue every second
-async function commandLoop() {
-  while (true) {
-    try {
-      const resp = await fetch(`${RELAY}/api/commands`);
-      if (resp.ok) {
-        const data = await resp.json();
-        for (const cmd of data.commands || []) {
-          if (cmd.action === 'reload_custom_link') {
-            const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/offer/custom_link' });
-            for (const tab of tabs) {
-              if (tab.id != null) await chrome.tabs.reload(tab.id);
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[background] commandLoop error', e);
-    }
-    await sleep(1000);
-  }
-}
-
 // Heartbeat mỗi 5s
 async function heartbeatLoop() {
   while (true) {
@@ -166,4 +149,3 @@ async function heartbeatLoop() {
 
 relayLoop();
 heartbeatLoop();
-commandLoop();
