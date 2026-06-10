@@ -59,11 +59,18 @@ async function convertAllViaPageUi(urls) {
   inputField.dispatchEvent(new Event('input', { bubbles: true }));
   inputField.dispatchEvent(new Event('change', { bubbles: true }));
 
-  // Shopee chỉ chuyển link sau khi bấm nút; chỉ click một lần
-  console.log('[content] clicking convert button');
-  button.click();
-  const newLinks = await waitForNewLinks(urls.length, existingLinks);
+  console.log('[content] found input field', inputField, 'submit button', button);
+  console.log('[content] clicking convert button once');
+  button.scrollIntoView({ block: 'center', inline: 'center' });
+  button.focus();
+  if (typeof button.click === 'function') {
+    button.click();
+  } else {
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+    button.dispatchEvent(clickEvent);
+  }
 
+  const newLinks = await waitForNewLinks(urls.length, existingLinks);
   console.log('[content] page UI got new links', newLinks);
 
   // Map theo thứ tự
@@ -118,7 +125,7 @@ function waitForNewLinks(count, existingLinks) {
 }
 
 function collectAllShortLinks() {
-  const pattern = /https?:\/\/s\.shopee\.vn\/[A-Za-z0-9]+/g;
+  const pattern = /https?:\/\/(?:s\.shopee\.vn|shope\.ee|shp\.ee)\/[A-Za-z0-9]+/g;
   const seen = new Set();
   const links = [];
   // Ưu tiên tìm trong dialog/modal trước, sau đó toàn trang
@@ -153,18 +160,26 @@ function findAffiliateInputField() {
 }
 
 function findAffiliateSubmitButton() {
-  const buttons = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit]'));
-  const label = b => (b.textContent || b.value || '').trim();
-  const hasPrimaryAction = text => /chuyển đổi|lấy link|tạo link|convert|generate/i.test(text);
+  const elements = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit], a[role=button], [role=button], a, span, div'));
+  const label = el => (el.textContent || el.value || '').trim();
+  const isVisible = el => el.offsetParent !== null || el.getClientRects().length > 0;
+  const hasPrimaryAction = text => /chuyển đổi|lấy link|tạo link|convert|generate|đổi link/i.test(text);
   const isCopy = text => /copy|sao chép|sao-chep|copy link|copyurl/i.test(text);
+  const scored = el => {
+    const text = label(el);
+    if (!text || !isVisible(el)) return -1;
+    if (isCopy(text)) return -1;
+    if (hasPrimaryAction(text)) return 10;
+    if (/submit|convert|generate|đổi|lấy/i.test(text)) return 5;
+    return -1;
+  };
 
-  return buttons.find(b => {
-    const text = label(b);
-    return hasPrimaryAction(text) && !isCopy(text);
-  }) || buttons.find(b => {
-    const text = label(b);
-    return /submit|convert|generate/i.test(text) && !isCopy(text);
-  });
+  const candidates = elements
+    .map(el => ({ el, score: scored(el) }))
+    .filter(item => item.score >= 0)
+    .sort((a, b) => b.score - a.score);
+
+  return candidates.length ? candidates[0].el : null;
 }
 
 function getCleanText(el) {
