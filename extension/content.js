@@ -58,10 +58,21 @@ async function convertAllViaPageUi(urls) {
   inputField.value = urls.join('\n');
   inputField.dispatchEvent(new Event('input', { bubbles: true }));
   inputField.dispatchEvent(new Event('change', { bubbles: true }));
-  button.click();
 
-  // Chờ đủ N link mới xuất hiện (không tính link cũ)
-  const newLinks = await waitForNewLinks(urls.length, existingLinks);
+  // Nếu page đã tự động chuyển link khi input thay đổi, không click lại
+  let newLinks = [];
+  for (let i = 0; i < 5; i += 1) {
+    await sleep(200);
+    newLinks = collectAllShortLinks().filter(l => !existingLinks.has(l));
+    if (newLinks.length >= urls.length) break;
+  }
+  if (newLinks.length < urls.length) {
+    button.click();
+    newLinks = await waitForNewLinks(urls.length, existingLinks);
+  } else {
+    newLinks = newLinks.slice(0, urls.length);
+  }
+
   console.log('[content] page UI got new links', newLinks);
 
   // Map theo thứ tự
