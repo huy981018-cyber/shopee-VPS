@@ -106,7 +106,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get('Content-Length', 0))
-        body = json.loads(self.rfile.read(length))
+        raw_body = self.rfile.read(length)
+        if length == 0:
+            body = {}
+        else:
+            try:
+                body = json.loads(raw_body.decode('utf-8', errors='ignore'))
+            except Exception:
+                self._json(400, {'error': 'Invalid JSON'})
+                return
 
         if self.path == '/api/heartbeat':
             last_heartbeat[0] = time.time()
