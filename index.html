@@ -142,16 +142,7 @@
       document.getElementById('detail-count').textContent = '0';
       bulkResults = [];
 
-      // Reload custom_link tab
-      try {
-        await fetch(`${RELAY_BASE}/api/reload-custom-link`, { 
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-      } catch (e) { console.log('Reload custom_link failed:', e); }
-
-      // Reset relay server
+      // Bước 1: Gọi reset relay (giải phóng jobs treo + unblock)
       try {
         await fetch(`${RELAY_BASE}/api/reset`, { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -159,7 +150,25 @@
         });
       } catch {}
 
-      // Tell extension to reload custom_link tab
+      // Bước 2: Gọi fix-extension (reset trạng thái extension, unblock pending events)
+      try {
+        await fetch(`${RELAY_BASE}/api/fix-extension`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch (e) { console.log('fix-extension failed:', e); }
+
+      // Bước 3: Reload custom_link tab trực tiếp (endpoint cũ)
+      try {
+        await fetch(`${RELAY_BASE}/api/reload-custom-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch (e) { console.log('reload-custom-link failed:', e); }
+
+      // Bước 4: Gửi reload command cho extension
       try {
         await fetch(`${RELAY_BASE}/api/command`, {
           method: 'POST',
@@ -168,8 +177,8 @@
         });
       } catch (e) { console.log('send reload command failed:', e); }
 
-      // Wait a bit for the reload command to be processed
-      await sleep(2000);
+      // Bước 5: Chờ extension xử lý
+      await sleep(3000);
       
       btn.disabled = false;
       btn.textContent = 'Chuyển đổi';

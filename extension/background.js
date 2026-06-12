@@ -1,15 +1,16 @@
 // ============================================================
-//  Background Service Worker — GCP version
-//  Chrome và relay.py chạy cùng máy → poll localhost trực tiếp
+//  Background Service Worker — GCP version (FIX: auto-recovery)
+//  Dùng chrome.alarms để giữ worker sống, thay vì while(true)
 // ============================================================
 
 let RELAY = 'http://localhost:8080';
 
-// Load RELAY URL từ storage (cho phép thay đổi động cho GCP IP)
+// Load RELAY URL từ storage
 chrome.storage.sync.get('relayUrl', (data) => {
   if (data.relayUrl) RELAY = data.relayUrl;
   console.log('[background] RELAY URL:', RELAY);
 });
+
 const activeJobs = new Set();
 const injectedTabs = new Set();
 
@@ -18,41 +19,92 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 chrome.tabs.onRemoved.addListener(tabId => injectedTabs.delete(tabId));
 
-const COMMAND_POLL_INTERVAL_MS = 1000;
+// ============================================================
+//  Thay while(true) bằng chrome.alarms — giữ worker sống
+// ============================================================
 
-async function relayLoop() {
-  while (true) {
-    try {
-      const resp = await fetch(`${RELAY}/api/jobs`);
-      if (!resp.ok) { await sleep(1000); continue; }
-      const jobs = await resp.json();
-      for (const [jobId, job] of Object.entries(jobs)) {
-        if (!activeJobs.has(jobId)) {
-          activeJobs.add(jobId);
-          await processRelayJob(jobId, job.urls ?? job);
-        }
+chrome.runtime.onStartup.addListener(() => {
+  createAlarms();
+});
+chrome.runtime.onInstalled.addListener(() => {
+  createAlarms();
+});
+
+function createAlarms() {
+  // Poll jobs mỗi 1s
+  chrome.alarms.create('pollJobs', { periodInMinutes: 1/60 });
+  // Poll commands mỗi 1s
+  chrome.alarms.create('pollCommands', { periodInMinutes: 1/60 });
+  // Heartbeat mỗi 5s
+  chrome.alarms.create('heartbeat', { periodInMinutes: 5/60 });
+  // Reload custom_link tab mỗi 30 phút
+  chrome.alarms.create('reloadCustomLink', { periodInMinutes: 30 });
+  // Self-ping mỗi 25s để tránh worker bị suspend
+  chrome.alarms.create('keepAlive', { periodInMinutes: 25/60 });
+  console.log('[background] Alarms created');
+}
+
+// ============================================================
+//  Xử lý alarm
+// ============================================================
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  switch (alarm.name) {
+    case 'pollJobs':
+      await pollJobs();
+      break;
+    case 'pollCommands':
+      await pollCommands();
+      break;
+    case 'heartbeat':
+      await sendHeartbeat();
+      break;
+    case 'reloadCustomLink':
+      await reloadCustomLinkTab();
+      break;
+    case 'keepAlive':
+      // Chỉ cần 1 log nhẹ để worker không bị suspend
+      console.debug('[background] keepAlive');
+      break;
+  }
+});
+
+// ============================================================
+//  Poll jobs từ relay
+// ============================================================
+
+async function pollJobs() {
+  try {
+    const resp = await fetch(`${RELAY}/api/jobs`);
+    if (!resp.ok) return;
+    const jobs = await resp.json();
+    for (const [jobId, job] of Object.entries(jobs)) {
+      if (!activeJobs.has(jobId)) {
+        activeJobs.add(jobId);
+        processRelayJob(jobId, job.urls ?? job);
       }
-    } catch {
-      await sleep(1000);
     }
+  } catch {
+    // silent
   }
 }
 
-async function commandLoop() {
-  while (true) {
-    try {
-      const resp = await fetch(`${RELAY}/api/command`);
-      if (resp.ok) {
-        const data = await resp.json();
-        if (Array.isArray(data.commands) && data.commands.length) {
-          console.log('[background] received commands', data.commands);
-          await handleCommands(data.commands);
-        }
+// ============================================================
+//  Poll commands
+// ============================================================
+
+async function pollCommands() {
+  try {
+    const resp = await fetch(`${RELAY}/api/command`);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (Array.isArray(data.commands) && data.commands.length) {
+        console.log('[background] received commands', data.commands);
+        await handleCommands(data.commands);
       }
-    } catch (e) {
-      console.warn('[background] commandLoop error', e);
     }
-    await sleep(COMMAND_POLL_INTERVAL_MS);
+  } catch {
+    // silent
   }
 }
 
@@ -80,6 +132,10 @@ async function reloadCustomLinkTab() {
   }
 }
 
+// ============================================================
+//  Xử lý job chuyển đổi link
+// ============================================================
+
 async function processRelayJob(jobId, urls) {
   let payload;
   try {
@@ -102,11 +158,13 @@ async function processRelayJob(jobId, urls) {
   } finally {
     activeJobs.delete(jobId);
   }
-  await fetch(`${RELAY}/api/result/${jobId}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
+  try {
+    await fetch(`${RELAY}/api/result/${jobId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {}
 }
 
 function waitForTab(tabId, timeout = 30000) {
@@ -157,40 +215,19 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 2) {
   throw lastError;
 }
 
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+// ============================================================
+//  Heartbeat
+// ============================================================
 
-const RELOAD_INTERVAL_MINUTES = 30;
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create('reloadCustomLink', { periodInMinutes: RELOAD_INTERVAL_MINUTES });
-});
-chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create('reloadCustomLink', { periodInMinutes: RELOAD_INTERVAL_MINUTES });
-});
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== 'reloadCustomLink') return;
+async function sendHeartbeat() {
   try {
-    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/offer/custom_link' });
-    for (const tab of tabs) {
-      if (tab.id != null) chrome.tabs.reload(tab.id);
-    }
-  } catch (e) {}
-});
-
-// Heartbeat mỗi 5s
-async function heartbeatLoop() {
-  while (true) {
-    try {
-      const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
-      await fetch(`${RELAY}/api/heartbeat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ affiliate_tab: tabs.length > 0 }),
-      });
-    } catch {}
-    await sleep(5000);
-  }
+    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+    await fetch(`${RELAY}/api/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ affiliate_tab: tabs.length > 0 }),
+    });
+  } catch {}
 }
 
-relayLoop();
-commandLoop();
-heartbeatLoop();
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }

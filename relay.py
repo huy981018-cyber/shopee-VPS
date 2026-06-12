@@ -64,6 +64,17 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/ping':
             self._json(200, {'ok': True})
 
+        elif self.path == '/api/extension-health':
+            with lock:
+                self._json(200, {
+                    'ok': True,
+                    'server': True,
+                    'jobs_count': len(jobs),
+                    'pending_commands': len(pending_commands),
+                    'result_events': len(result_events),
+                    'last_heartbeat': time.time() - last_heartbeat[0] < 10,
+                })
+
         elif self.path == '/api/health':
             ext_ok = time.time() - last_heartbeat[0] < 10
             with lock:
@@ -133,6 +144,15 @@ class Handler(SimpleHTTPRequestHandler):
             with lock:
                 pending_commands.append({'action': 'reload_custom_link'})
             self._json(200, {'ok': True})
+
+        elif self.path == '/api/fix-extension':
+            with lock:
+                for ev in result_events.values():
+                    ev.set()
+                jobs.clear()
+                results.clear()
+                result_events.clear()
+            self._json(200, {'ok': True, 'message': 'Extension state reset'})
 
         elif self.path == '/api/command':
             action = body.get('action')
