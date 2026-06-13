@@ -189,12 +189,19 @@
       const banner = document.getElementById('banner');
       const btn    = document.getElementById('btn-convert');
       try {
-        const resp = await fetch(`${RELAY_BASE}/api/ping`);
+        // Dùng /api/health thay vì /api/ping để kiểm tra cả extension
+        const resp = await fetch(`${RELAY_BASE}/api/health`);
         const data = await resp.json();
-        if (data?.ok) {
+        if (data?.server && data?.extension) {
           banner.className   = 'banner banner-ok';
-          banner.textContent = '✓ Relay server sẵn sàng — Sẵn sàng chuyển đổi';
+          banner.textContent = '✓ Server & Extension sẵn sàng — Sẵn sàng chuyển đổi';
           btn.disabled = false;
+          return;
+        }
+        if (data?.server && !data?.extension) {
+          banner.className   = 'banner banner-warn';
+          banner.textContent = '⚡ Server OK, Extension đang khởi động...';
+          btn.disabled = true;
           return;
         }
       } catch {}
@@ -493,7 +500,40 @@
       }
     }
 
-    // Khởi động tuần tự: warmup → chờ → checkServer
+    // Kiểm tra /api/health cho đến khi extension sẵn sàng (có timeout)
+    async function waitForReady(maxWaitMs = 5000) {
+      const banner = document.getElementById('banner');
+      const btn    = document.getElementById('btn-convert');
+      const start  = Date.now();
+
+      while (Date.now() - start < maxWaitMs) {
+        try {
+          const resp = await fetch(`${RELAY_BASE}/api/health`);
+          const data = await resp.json();
+          if (data?.server && data?.extension) {
+            banner.className   = 'banner banner-ok';
+            banner.textContent = '✓ Server & Extension sẵn sàng — Sẵn sàng chuyển đổi';
+            btn.disabled = false;
+            return true;
+          }
+          if (data?.server && !data?.extension) {
+            // Extension chưa sẵn sàng, đợi 500ms rồi thử lại
+            await sleep(500);
+            continue;
+          }
+        } catch {}
+        // Server chưa chạy, đợi 500ms
+        await sleep(500);
+      }
+
+      // Hết timeout
+      banner.className   = 'banner banner-err';
+      banner.textContent = '⚠️ Không thể kết nối Extension trong ' + (maxWaitMs/1000) + 's';
+      btn.disabled = true;
+      return false;
+    }
+
+    // Khởi động: gửi warmup ngay → chờ extension ready (tối đa 5s)
     async function initializePage() {
       const banner = document.getElementById('banner');
       const btn    = document.getElementById('btn-convert');
@@ -501,19 +541,15 @@
       banner.className   = 'banner banner-warn';
       banner.textContent = '⚡ Đang khởi tạo extension...';
       btn.disabled = true;
+
+      // Gửi warmup ngay (không chờ)
+      warmupExtension();
       
-      // Gửi warmup liên tục 3 lần, mỗi lần cách nhau 2s
-      // Đảm bảo extension được đánh thức + tab affiliate được load
-      for (let i = 0; i < 3; i++) {
-        await warmupExtension();
-        await sleep(2000);
-      }
+      // Chờ extension thực sự sẵn sàng (poll /api/health với timeout 5s)
+      await waitForReady(5000);
       
       // Bắt đầu periodic warmup
       startPeriodicWarmup();
-      
-      // Kiểm tra server (enable button nếu OK)
-      await checkServer();
     }
 
     // Gọi init ngay khi trang load
