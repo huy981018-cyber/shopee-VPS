@@ -198,8 +198,8 @@
       btn.textContent = 'Chuyển đổi';
     }
 
-    // Poll /api/health cho đến khi affiliate_tab = true hoặc timeout 8s
-    async function waitForAffiliateReady(timeoutMs = 8000) {
+    // Poll /api/health cho đến khi affiliate_tab = true hoặc timeout 12s
+    async function waitForAffiliateReady(timeoutMs = 12000) {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         try {
