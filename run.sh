@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Launcher script - tự động setup và chạy start.sh
+# Launcher script - t? ??ng setup v? ch?y start.sh
 
 set -e
 
 echo "=== Setup shopee-VPS ==="
 
-# Cài đặt dos2unix nếu chưa có
+# C?i ??t dos2unix n?u ch?a c?
 if ! command -v dos2unix &> /dev/null; then
-    echo "Cài đặt dos2unix..."
+    echo "C?i ??t dos2unix..."
     sudo apt update -y
     sudo apt install -y dos2unix
 fi
 
-# Lấy thư mục script hiện tại
+# L?y th? m?c script hi?n t?i
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 START_SH="$SCRIPT_DIR/start.sh"
 
-# Chuyển đổi line endings từ Windows CRLF sang Unix LF
-echo "Chuyển đổi line endings..."
+# Chuy?n ??i line endings t? Windows CRLF sang Unix LF
+echo "Chuy?n ??i line endings..."
 dos2unix "$START_SH" 2>/dev/null || sed -i 's/\r$//' "$START_SH"
 
-# Đặt permissions
-echo "Đặt quyền thực thi..."
+# ??t permissions
+echo "??t quy?n th?c thi..."
 chmod +x "$START_SH"
 
-# Chạy start.sh
-echo "=== Khởi động server ==="
+# Ch?y start.sh
+echo "=== Kh?i ??ng server ==="
 "$START_SH"

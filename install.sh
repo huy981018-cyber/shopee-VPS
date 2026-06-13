@@ -1,15 +1,15 @@
 #!/bin/bash
-# Chạy 1 lần duy nhất trên GCP VM
+# Ch?y 1 l?n duy nh?t tr?n GCP VM
 set -e
 
-echo "=== Cài các gói cần thiết ==="
+echo "=== C?i c?c g?i c?n thi?t ==="
 sudo apt-get update -y
 sudo apt-get install -y python3 wget
 
-echo "=== Cài Google Chrome ==="
+echo "=== C?i Google Chrome ==="
 wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
 rm google-chrome-stable_current_amd64.deb
 
 echo ""
-echo "=== Cài đặt xong. Chạy: bash start.sh ==="
+echo "=== C?i ??t xong. Ch?y: bash start.sh ==="
