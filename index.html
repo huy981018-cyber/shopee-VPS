@@ -189,19 +189,12 @@
       const banner = document.getElementById('banner');
       const btn    = document.getElementById('btn-convert');
       try {
-        // Dùng /api/health thay vì /api/ping để kiểm tra cả extension
-        const resp = await fetch(`${RELAY_BASE}/api/health`);
+        const resp = await fetch(`${RELAY_BASE}/api/ping`);
         const data = await resp.json();
-        if (data?.server && data?.extension) {
+        if (data?.ok) {
           banner.className   = 'banner banner-ok';
-          banner.textContent = '✓ Server & Extension sẵn sàng — Sẵn sàng chuyển đổi';
+          banner.textContent = '✓ Relay server sẵn sàng — Sẵn sàng chuyển đổi';
           btn.disabled = false;
-          return;
-        }
-        if (data?.server && !data?.extension) {
-          banner.className   = 'banner banner-warn';
-          banner.textContent = '⚡ Server OK, Extension đang khởi động...';
-          btn.disabled = true;
           return;
         }
       } catch {}
@@ -473,102 +466,24 @@
     function sleep(ms)        { return new Promise(r => setTimeout(r, ms)); }
 
     // ============================================================
-    //  WARMUP: Giữ extension + tab affiliate luôn sẵn sàng
-    //  QUAN TRỌNG: Warmup ngay lập tức khi load trang và CHỜ nó
-    //  hoàn tất trước khi enable button, để lần convert đầu không bị chậm
+    //  KHỞI TẠO: Kiểm tra server — mở tab affiliate nếu cần
+    //  Không cần warmup: WebSocket giữ extension sống 24/7
     // ============================================================
 
-    let warmupInterval = null;
-
-    async function warmupExtension() {
-      try {
-        await fetch(`${RELAY_BASE}/api/warmup`, { method: 'GET' });
-        console.log('[page] warmup sent');
-      } catch {}
-    }
-
-    function startPeriodicWarmup() {
-      stopPeriodicWarmup();
-      // Gửi warmup đều đặn mỗi 10s để giữ background worker tỉnh táo
-      warmupInterval = setInterval(warmupExtension, 10000);
-    }
-
-    function stopPeriodicWarmup() {
-      if (warmupInterval) {
-        clearInterval(warmupInterval);
-        warmupInterval = null;
-      }
-    }
-
-    // Kiểm tra /api/health cho đến khi extension sẵn sàng (có timeout)
-    async function waitForReady(maxWaitMs = 5000) {
-      const banner = document.getElementById('banner');
-      const btn    = document.getElementById('btn-convert');
-      const start  = Date.now();
-
-      while (Date.now() - start < maxWaitMs) {
-        try {
-          const resp = await fetch(`${RELAY_BASE}/api/health`);
-          const data = await resp.json();
-          if (data?.server && data?.extension) {
-            banner.className   = 'banner banner-ok';
-            banner.textContent = '✓ Server & Extension sẵn sàng — Sẵn sàng chuyển đổi';
-            btn.disabled = false;
-            return true;
-          }
-          if (data?.server && !data?.extension) {
-            // Extension chưa sẵn sàng, đợi 500ms rồi thử lại
-            await sleep(500);
-            continue;
-          }
-        } catch {}
-        // Server chưa chạy, đợi 500ms
-        await sleep(500);
-      }
-
-      // Hết timeout
-      banner.className   = 'banner banner-err';
-      banner.textContent = '⚠️ Không thể kết nối Extension trong ' + (maxWaitMs/1000) + 's';
-      btn.disabled = true;
-      return false;
-    }
-
-    // Khởi động: gửi warmup ngay → chờ extension ready (tối đa 5s)
     async function initializePage() {
       const banner = document.getElementById('banner');
       const btn    = document.getElementById('btn-convert');
       
       banner.className   = 'banner banner-warn';
-      banner.textContent = '⚡ Đang khởi tạo extension...';
+      banner.textContent = '⚡ Đang kết nối relay server...';
       btn.disabled = true;
-
-      // Gửi warmup ngay (không chờ)
-      warmupExtension();
       
-      // Chờ extension thực sự sẵn sàng (poll /api/health với timeout 5s)
-      await waitForReady(5000);
-      
-      // Bắt đầu periodic warmup
-      startPeriodicWarmup();
+      // Kiểm tra server (enable button nếu OK)
+      await checkServer();
     }
 
     // Gọi init ngay khi trang load
     initializePage();
-
-    // Khi tab hiện lại: gửi warmup ngay và khởi động lại interval
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
-        console.log('[page] tab visible again, restarting warmup');
-        // Gửi warmup 2 lần liên tiếp để đảm bảo đánh thức
-        warmupExtension().then(() => {
-          setTimeout(warmupExtension, 1000);
-        });
-        startPeriodicWarmup();
-      }
-    });
-
-    // Khi trang sắp đóng/unload, dọn dẹp
-    window.addEventListener('beforeunload', stopPeriodicWarmup);
   </script>
 </body>
 </html>

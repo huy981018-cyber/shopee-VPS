@@ -1,103 +1,186 @@
 // ============================================================
-//  Background Service Worker — GCP version (FIX: persistent + keepalive)
-//  Dùng content-script ports để giữ worker sống thay vì chỉ dùng alarms
+//  Background Service Worker — v3.0 (WebSocket only)
+//  WebSocket persistent connection → giữ worker sống vĩnh viễn
+//  Jobs + commands được push real-time, không cần polling
 // ============================================================
 
 let RELAY = 'http://localhost:8080';
+let WS_URL = 'ws://localhost:8081';
 
-// Load RELAY URL từ storage
-chrome.storage.sync.get('relayUrl', (data) => {
-  if (data.relayUrl) RELAY = data.relayUrl;
-  console.log('[background] RELAY URL:', RELAY);
-});
-
+let ws = null;
+let wsReconnectTimer = null;
+let wsHeartbeatTimer = null;
 const activeJobs = new Set();
 const injectedTabs = new Set();
 let cachedAffiliateTabId = null;
-let pollIntervalId = null;
-let commandIntervalId = null;
-let connectedPorts = new Set(); // track content-script ports
 
 // ============================================================
-//  PERSISTENT PORT CONNECTION — Giữ Service Worker sống
-//  Content script mở port → worker không bị terminate
+//  WebSocket — kết nối persistent tới relay server
+//  Chrome không thể terminate worker khi WebSocket đang mở
 // ============================================================
 
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'shopee-aff-content') {
-    console.log('[background] Content script connected via port');
-    connectedPorts.add(port);
-
-    // Khi có port kết nối → bắt đầu polling real-time
-    startPolling();
-
-    port.onMessage.addListener((msg) => {
-      if (msg.type === 'KEEPALIVE') {
-        // Chỉ cần nhận message là worker đã được giữ sống
-      }
-      // Xử lý kết quả từ content script nếu gửi qua port
-      if (msg.type === 'CONVERT_RESULT') {
-        handleConvertResult(msg.jobId, msg.result);
-      }
-    });
-
-    port.onDisconnect.addListener(() => {
-      console.log('[background] Content script port disconnected');
-      connectedPorts.delete(port);
-      if (connectedPorts.size === 0) {
-        stopPolling();
-      }
-    });
+function connectWebSocket() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
   }
-});
 
-function startPolling() {
-  if (pollIntervalId) return; // đã chạy rồi
-  console.log('[background] Starting real-time polling (setInterval)');
+  console.log('[background] Connecting WebSocket to', WS_URL);
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch (e) {
+    console.warn('[background] WebSocket creation failed', e);
+    scheduleReconnect();
+    return;
+  }
 
-  // Poll jobs mỗi 1.5 giây — real-time nhờ port giữ worker sống
-  pollIntervalId = setInterval(() => {
-    pollJobs();
-  }, 1500);
+  ws.onopen = () => {
+    console.log('[background] WebSocket connected');
+    // Gửi heartbeat mỗi 15s để giữ kết nối sống
+    startHeartbeat();
+  };
 
-  // Poll commands mỗi 2 giây
-  commandIntervalId = setInterval(() => {
-    pollCommands();
-  }, 2000);
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      handleWSMessage(msg);
+    } catch (e) {
+      console.warn('[background] Invalid WS message', e);
+    }
+  };
+
+  ws.onclose = (event) => {
+    console.log('[background] WebSocket disconnected (code:', event.code, ')');
+    stopHeartbeat();
+    ws = null;
+    scheduleReconnect();
+  };
+
+  ws.onerror = (err) => {
+    console.warn('[background] WebSocket error');
+  };
 }
 
-function stopPolling() {
-  if (pollIntervalId) {
-    clearInterval(pollIntervalId);
-    pollIntervalId = null;
+function scheduleReconnect() {
+  if (wsReconnectTimer) return;
+  // Thử kết nối lại sau 1s
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    connectWebSocket();
+  }, 1000);
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  // Gửi heartbeat + affiliate_tab status mỗi 15s
+  wsHeartbeatTimer = setInterval(async () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      stopHeartbeat();
+      return;
+    }
+    try {
+      const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+      ws.send(JSON.stringify({
+        type: 'heartbeat',
+        affiliate_tab: tabs.length > 0
+      }));
+    } catch {}
+  }, 15000);
+}
+
+function stopHeartbeat() {
+  if (wsHeartbeatTimer) {
+    clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = null;
   }
-  if (commandIntervalId) {
-    clearInterval(commandIntervalId);
-    commandIntervalId = null;
+}
+
+function wsSend(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify(data));
+    } catch {}
   }
-  console.log('[background] Stopped real-time polling (no ports)');
 }
 
 // ============================================================
-//  Alarms backup — khi không có content-script port nào kết nối
-//  (tối thiểu 1 phút trong MV3, dùng làm fallback)
+//  Xử lý message từ WebSocket
+// ============================================================
+
+async function handleWSMessage(msg) {
+  console.log('[background] WS message:', msg.type);
+
+  switch (msg.type) {
+    case 'connected':
+      console.log('[background] Confirmed connected to relay');
+      break;
+
+    case 'heartbeat_ack':
+      // Relay xác nhận heartbeat
+      break;
+
+    case 'new_job':
+      // Job mới từ relay — push qua WebSocket
+      if (msg.job_id && msg.urls && !activeJobs.has(msg.job_id)) {
+        activeJobs.add(msg.job_id);
+        processRelayJob(msg.job_id, msg.urls);
+      }
+      break;
+
+    case 'jobs':
+      // Danh sách jobs hiện tại (khi mới kết nối)
+      if (msg.jobs) {
+        for (const [jobId, job] of Object.entries(msg.jobs)) {
+          if (!activeJobs.has(jobId)) {
+            activeJobs.add(jobId);
+            processRelayJob(jobId, job.urls ?? job);
+          }
+        }
+      }
+      break;
+
+    case 'commands':
+      // Lệnh từ relay
+      if (Array.isArray(msg.commands) && msg.commands.length) {
+        console.log('[background] received commands', msg.commands);
+        await handleCommands(msg.commands);
+      }
+      break;
+
+    case 'pong':
+      break;
+  }
+}
+
+async function handleCommands(commands) {
+  for (const cmd of commands) {
+    if (cmd.action === 'reload_custom_link') {
+      await ensureAffiliateTabFresh();
+    }
+    // warmup không còn cần thiết — WebSocket giữ worker sống 24/7
+  }
+}
+
+// ============================================================
+//  Fallback: dùng chrome.alarms + HTTP polling khi WebSocket
+//  không kết nối được (lần đầu tiên worker chạy)
 // ============================================================
 
 chrome.runtime.onStartup.addListener(() => {
   createAlarms();
+  connectWebSocket();
 });
 chrome.runtime.onInstalled.addListener(() => {
   createAlarms();
+  connectWebSocket();
 });
 
 function createAlarms() {
-  // Chỉ tạo alarms cho các tác vụ không cần real-time
-  // Heartbeat mỗi 1 phút (MV3 minimum)
+  // Heartbeat backup mỗi 1 phút
   chrome.alarms.create('heartbeat', { periodInMinutes: 1 });
   // Reload custom_link tab mỗi 30 phút
   chrome.alarms.create('reloadCustomLink', { periodInMinutes: 30 });
-  // Wake-up check: kiểm tra xem cần kết nối lại không
-  chrome.alarms.create('wakeupCheck', { periodInMinutes: 1 });
+  // Kiểm tra WebSocket connection mỗi 30s
+  chrome.alarms.create('checkWS', { periodInMinutes: 0.5 });
   console.log('[background] Backup alarms created');
 }
 
@@ -109,88 +192,44 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     case 'reloadCustomLink':
       await reloadCustomLinkTab();
       break;
-    case 'wakeupCheck':
-      // Khi worker thức dậy từ alarm, kiểm tra có tab affiliate không
-      // Nếu có, thử inject content script để kích hoạt port connection
-      await tryWakeUpContentScript();
+    case 'checkWS':
+      // Nếu WebSocket không kết nối, thử kết nối lại
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        connectWebSocket();
+      }
       break;
   }
 });
 
 // ============================================================
-//  Wakeup — khi worker bị terminate rồi thức dậy
+//  Poll HTTP fallback — dùng khi WebSocket chưa kết nối
 // ============================================================
 
-async function tryWakeUpContentScript() {
-  try {
-    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
-    if (tabs.length > 0) {
-      const tab = tabs.find(t => t.status === 'complete');
-      if (tab && tab.id != null) {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['content.js']
-          });
-          // Khi content.js chạy, nó sẽ connect port → polling tự động bắt đầu
-        } catch {}
-      }
+let fallbackPollTimer = null;
+
+function startFallbackPolling() {
+  if (fallbackPollTimer) return;
+  // Poll mỗi 2s khi WebSocket chưa sẵn sàng
+  fallbackPollTimer = setInterval(async () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Đã có WebSocket, dừng fallback
+      stopFallbackPolling();
+      return;
     }
-    // Nếu không có tab nào, không sao — lần sau mở tab sẽ tự kết nối
-  } catch {}
+    await pollJobs();
+    await pollCommands();
+  }, 2000);
 }
 
-// ============================================================
-//  Poll jobs từ relay
-// ============================================================
-
-async function pollJobs() {
-  try {
-    const resp = await fetch(`${RELAY}/api/jobs`);
-    if (!resp.ok) return;
-    const jobs = await resp.json();
-    for (const [jobId, job] of Object.entries(jobs)) {
-      if (!activeJobs.has(jobId)) {
-        activeJobs.add(jobId);
-        processRelayJob(jobId, job.urls ?? job);
-      }
-    }
-  } catch {
-    // silent
+function stopFallbackPolling() {
+  if (fallbackPollTimer) {
+    clearInterval(fallbackPollTimer);
+    fallbackPollTimer = null;
   }
 }
 
 // ============================================================
-//  Poll commands
-// ============================================================
-
-async function pollCommands() {
-  try {
-    const resp = await fetch(`${RELAY}/api/command`);
-    if (resp.ok) {
-      const data = await resp.json();
-      if (Array.isArray(data.commands) && data.commands.length) {
-        console.log('[background] received commands', data.commands);
-        await handleCommands(data.commands);
-      }
-    }
-  } catch {
-    // silent
-  }
-}
-
-async function handleCommands(commands) {
-  for (const cmd of commands) {
-    if (cmd.action === 'reload_custom_link') {
-      await ensureAffiliateTabFresh();
-    } else if (cmd.action === 'warmup') {
-      await prepareAffiliateTab();
-    }
-  }
-}
-
-// ============================================================
-//  Warmup: giữ tab affiliate luôn sẵn sàng + content script injected
+//  Warmup: giữ tab affiliate luôn sẵn sàng
 // ============================================================
 
 async function prepareAffiliateTab() {
@@ -212,12 +251,10 @@ async function prepareAffiliateTab() {
       tabId = await getAffiliateTab();
     }
     
-    // Inject content script để content.js luôn sẵn sàng
     try {
       await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
     } catch {}
     
-    // Ping content script để đảm bảo nó đã lắng nghe message
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'PING' });
     } catch {
@@ -334,25 +371,74 @@ async function processRelayJob(jobId, urls) {
   } finally {
     activeJobs.delete(jobId);
   }
+  
+  // Gửi kết quả qua WebSocket (ưu tiên) hoặc HTTP fallback
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    wsSend({ type: 'result', job_id: jobId, result: payload });
+  } else {
+    try {
+      await fetch(`${RELAY}/api/result/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch {}
+  }
+}
+
+// ============================================================
+//  Fallback HTTP polling (khi WebSocket chưa kết nối)
+// ============================================================
+
+async function pollJobs() {
   try {
-    await fetch(`${RELAY}/api/result/${jobId}`, {
+    const resp = await fetch(`${RELAY}/api/jobs`);
+    if (!resp.ok) return;
+    const jobs = await resp.json();
+    for (const [jobId, job] of Object.entries(jobs)) {
+      if (!activeJobs.has(jobId)) {
+        activeJobs.add(jobId);
+        processRelayJob(jobId, job.urls ?? job);
+      }
+    }
+  } catch {
+    // silent
+  }
+}
+
+async function pollCommands() {
+  try {
+    const resp = await fetch(`${RELAY}/api/command`);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (Array.isArray(data.commands) && data.commands.length) {
+        console.log('[background] received commands (HTTP fallback)', data.commands);
+        await handleCommands(data.commands);
+      }
+    }
+  } catch {
+    // silent
+  }
+}
+
+// ============================================================
+//  Heartbeat HTTP fallback
+// ============================================================
+
+async function sendHeartbeat() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+    await fetch(`${RELAY}/api/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ affiliate_tab: tabs.length > 0 }),
     });
   } catch {}
 }
 
-// Handle convert result sent via port (from content.js)
-function handleConvertResult(jobId, result) {
-  try {
-    fetch(`${RELAY}/api/result/${jobId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(result),
-    });
-  } catch {}
-}
+// ============================================================
+//  Helpers (giữ nguyên)
+// ============================================================
 
 function waitForTab(tabId, timeout = 30000) {
   return new Promise((resolve, reject) => {
@@ -402,19 +488,23 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 2) {
   throw lastError;
 }
 
-// ============================================================
-//  Heartbeat
-// ============================================================
-
-async function sendHeartbeat() {
-  try {
-    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
-    await fetch(`${RELAY}/api/heartbeat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ affiliate_tab: tabs.length > 0 }),
-    });
-  } catch {}
-}
-
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// ============================================================
+//  Khởi tạo: kết nối WebSocket ngay lập tức
+//  + fallback HTTP polling khi WebSocket chưa sẵn sàng
+// ============================================================
+
+connectWebSocket();
+startFallbackPolling();
+
+// Khi extension được load, kiểm tra tab affiliate và warmup
+chrome.runtime.onStartup.addListener(() => {
+  prepareAffiliateTab();
+});
+chrome.runtime.onInstalled.addListener(() => {
+  prepareAffiliateTab();
+});
+
+// Cũng warmup ngay khi load
+prepareAffiliateTab();
