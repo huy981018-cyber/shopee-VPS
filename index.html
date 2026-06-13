@@ -467,6 +467,8 @@
 
     // ============================================================
     //  WARMUP: Giữ extension + tab affiliate luôn sẵn sàng
+    //  QUAN TRỌNG: Warmup ngay lập tức khi load trang và CHỜ nó
+    //  hoàn tất trước khi enable button, để lần convert đầu không bị chậm
     // ============================================================
 
     let warmupInterval = null;
@@ -480,10 +482,8 @@
 
     function startPeriodicWarmup() {
       stopPeriodicWarmup();
-      // Gửi warmup ngay lập tức
-      warmupExtension();
-      // Và gửi đều đặn mỗi 20s để giữ background worker tỉnh táo + tab affiliate sẵn sàng
-      warmupInterval = setInterval(warmupExtension, 20000);
+      // Gửi warmup đều đặn mỗi 10s để giữ background worker tỉnh táo
+      warmupInterval = setInterval(warmupExtension, 10000);
     }
 
     function stopPeriodicWarmup() {
@@ -493,20 +493,41 @@
       }
     }
 
-    // Kiểm tra server ngay khi tải trang
-    checkServer();
+    // Khởi động tuần tự: warmup → chờ → checkServer
+    async function initializePage() {
+      const banner = document.getElementById('banner');
+      const btn    = document.getElementById('btn-convert');
+      
+      banner.className   = 'banner banner-warn';
+      banner.textContent = '⚡ Đang khởi tạo extension...';
+      btn.disabled = true;
+      
+      // Gửi warmup liên tục 3 lần, mỗi lần cách nhau 2s
+      // Đảm bảo extension được đánh thức + tab affiliate được load
+      for (let i = 0; i < 3; i++) {
+        await warmupExtension();
+        await sleep(2000);
+      }
+      
+      // Bắt đầu periodic warmup
+      startPeriodicWarmup();
+      
+      // Kiểm tra server (enable button nếu OK)
+      await checkServer();
+    }
 
-    // Warmup sau 1s để không ảnh hưởng checkServer
-    setTimeout(startPeriodicWarmup, 1000);
+    // Gọi init ngay khi trang load
+    initializePage();
 
-    // Khi tab hiện lại: gửi warmup ngay + khởi động lại interval
+    // Khi tab hiện lại: gửi warmup ngay và khởi động lại interval
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
         console.log('[page] tab visible again, restarting warmup');
+        // Gửi warmup 2 lần liên tiếp để đảm bảo đánh thức
+        warmupExtension().then(() => {
+          setTimeout(warmupExtension, 1000);
+        });
         startPeriodicWarmup();
-      } else {
-        // Khi tab ẩn, vẫn giữ warmup chạy (trong trường hợp tab vẫn mở ở background)
-        // Nhưng cũng không cần thiết phải dừng
       }
     });
 

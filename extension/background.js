@@ -13,11 +13,18 @@ chrome.storage.sync.get('relayUrl', (data) => {
 
 const activeJobs = new Set();
 const injectedTabs = new Set();
+let cachedAffiliateTabId = null; // tab đã được warmup sẵn
 
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === 'loading') injectedTabs.delete(tabId);
+  if (info.status === 'loading') {
+    injectedTabs.delete(tabId);
+    if (tabId === cachedAffiliateTabId) cachedAffiliateTabId = null;
+  }
 });
-chrome.tabs.onRemoved.addListener(tabId => injectedTabs.delete(tabId));
+chrome.tabs.onRemoved.addListener(tabId => {
+  injectedTabs.delete(tabId);
+  if (tabId === cachedAffiliateTabId) cachedAffiliateTabId = null;
+});
 
 // ============================================================
 //  Thay while(true) bằng chrome.alarms — giữ worker sống
@@ -41,8 +48,8 @@ function createAlarms() {
   chrome.alarms.create('reloadCustomLink', { periodInMinutes: 30 });
   // Self-ping mỗi 20s để tránh worker bị suspend
   chrome.alarms.create('keepAlive', { periodInMinutes: 20/60 });
-  // Deep warmup — đảm bảo tab affiliate + content script sẵn sàng mỗi 45s
-  chrome.alarms.create('deepWarmup', { periodInMinutes: 45/60 });
+  // Deep warmup — đảm bảo tab affiliate + content script sẵn sàng mỗi 30s
+  chrome.alarms.create('deepWarmup', { periodInMinutes: 30/60 });
   console.log('[background] Alarms created');
 }
 
@@ -131,8 +138,26 @@ async function handleCommands(commands) {
 
 async function prepareAffiliateTab() {
   try {
-    const tabId = await getAffiliateTab();
-    if (!tabId) return;
+    let tabId = await getAffiliateTab();
+    if (!tabId) return null;
+    
+    // Kiểm tra nếu tab bị Chrome discard (suspend để tiết kiệm RAM)
+    // Nếu bị discard, cần đánh thức tab bằng cách update URL
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.discarded) {
+        console.log('[background] tab is discarded, waking up...', tabId);
+        // Đánh thức tab: update URL -> Chrome sẽ unsuspend và reload
+        await chrome.tabs.update(tabId, { url: tab.url });
+        await waitForTab(tabId);
+        console.log('[background] tab woken up', tabId);
+      }
+    } catch (e) {
+      console.warn('[background] check discarded failed', e);
+      // Nếu tab không tồn tại, bỏ cache và tìm lại
+      cachedAffiliateTabId = null;
+      tabId = await getAffiliateTab();
+    }
     
     // Inject content script để content.js luôn sẵn sàng
     try {
@@ -142,11 +167,20 @@ async function prepareAffiliateTab() {
     // Ping content script để đảm bảo nó đã lắng nghe message
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'PING' });
-    } catch {}
+    } catch {
+      // Nếu PING vẫn thất bại, thử inject lại và ping lần nữa
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+        await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+      } catch {}
+    }
     
+    // Cache tabId để dùng ngay lần tiếp theo
+    cachedAffiliateTabId = tabId;
     return tabId;
   } catch (e) {
     console.warn('[background] prepareAffiliateTab failed', e);
+    cachedAffiliateTabId = null;
     return null;
   }
 }
@@ -201,22 +235,60 @@ async function reloadCustomLinkTab() {
 async function processRelayJob(jobId, urls) {
   let payload;
   try {
-    let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
-    if (!tabs.length) {
-      const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
-      await waitForTab(tab.id);
-      tabs = [tab];
+    // Dùng cached tab ngay lập tức — không query tabs
+    let tabId = cachedAffiliateTabId;
+    let fallback = false;
+    
+    if (!tabId) {
+      // Không có cached, fallback query tabs
+      let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+      if (!tabs.length) {
+        const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
+        await waitForTab(tab.id);
+        tabs = [tab];
+      }
+      tabId = tabs[0].id;
+      fallback = true;
     }
-    const tabId = tabs[0].id;
-    await injectContentScript(tabId);
+    
+    // Kiểm tra nhanh tab có còn hoạt động không
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.discarded) {
+        // Tab bị Chrome discard — đánh thức
+        await chrome.tabs.update(tabId, { url: tab.url });
+        await waitForTab(tabId);
+      }
+    } catch {
+      // Tab không tồn tại — fallback
+      let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+      if (!tabs.length) {
+        const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
+        await waitForTab(tab.id);
+        tabs = [tab];
+      }
+      tabId = tabs[0].id;
+      fallback = true;
+    }
+    
+    // Chỉ inject nếu chưa có hoặc fallback
+    if (fallback || !injectedTabs.has(tabId)) {
+      await injectContentScript(tabId);
+    }
+    
+    // Gửi message ngay — content script đã sẵn sàng từ warmup
     const result = await sendMessageToTabWithRetry(tabId, { type: 'CONVERT_URLS', urls });
     const results = {};
     for (const url of urls) {
       results[url] = result?.results?.[url] ?? { error: 'Không nhận được kết quả' };
     }
     payload = { results };
+    
+    // Cache lại tabId cho lần sau
+    cachedAffiliateTabId = tabId;
   } catch (e) {
     payload = { error: e.message };
+    cachedAffiliateTabId = null;
   } finally {
     activeJobs.delete(jobId);
   }

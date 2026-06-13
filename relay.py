@@ -256,7 +256,7 @@ def cleanup_loop():
 def warmup_loop():
     import urllib.request as urllib_req, urllib.error as urllib_err
     while True:
-        time.sleep(15)  # cứ 15s gửi warmup 1 lần
+        time.sleep(10)  # cứ 10s gửi warmup 1 lần — giữ extension và tab affiliate luôn tỉnh
         try:
             req = urllib_req.Request(
                 'http://localhost:8080/api/warmup',
