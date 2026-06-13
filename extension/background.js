@@ -1,6 +1,6 @@
 // ============================================================
-//  Background Service Worker — GCP version (FIX: auto-recovery)
-//  Dùng chrome.alarms để giữ worker sống, thay vì while(true)
+//  Background Service Worker — GCP version (FIX: persistent + keepalive)
+//  Dùng content-script ports để giữ worker sống thay vì chỉ dùng alarms
 // ============================================================
 
 let RELAY = 'http://localhost:8080';
@@ -13,21 +13,74 @@ chrome.storage.sync.get('relayUrl', (data) => {
 
 const activeJobs = new Set();
 const injectedTabs = new Set();
-let cachedAffiliateTabId = null; // tab đã được warmup sẵn
-
-chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === 'loading') {
-    injectedTabs.delete(tabId);
-    if (tabId === cachedAffiliateTabId) cachedAffiliateTabId = null;
-  }
-});
-chrome.tabs.onRemoved.addListener(tabId => {
-  injectedTabs.delete(tabId);
-  if (tabId === cachedAffiliateTabId) cachedAffiliateTabId = null;
-});
+let cachedAffiliateTabId = null;
+let pollIntervalId = null;
+let commandIntervalId = null;
+let connectedPorts = new Set(); // track content-script ports
 
 // ============================================================
-//  Thay while(true) bằng chrome.alarms — giữ worker sống
+//  PERSISTENT PORT CONNECTION — Giữ Service Worker sống
+//  Content script mở port → worker không bị terminate
+// ============================================================
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'shopee-aff-content') {
+    console.log('[background] Content script connected via port');
+    connectedPorts.add(port);
+
+    // Khi có port kết nối → bắt đầu polling real-time
+    startPolling();
+
+    port.onMessage.addListener((msg) => {
+      if (msg.type === 'KEEPALIVE') {
+        // Chỉ cần nhận message là worker đã được giữ sống
+      }
+      // Xử lý kết quả từ content script nếu gửi qua port
+      if (msg.type === 'CONVERT_RESULT') {
+        handleConvertResult(msg.jobId, msg.result);
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      console.log('[background] Content script port disconnected');
+      connectedPorts.delete(port);
+      if (connectedPorts.size === 0) {
+        stopPolling();
+      }
+    });
+  }
+});
+
+function startPolling() {
+  if (pollIntervalId) return; // đã chạy rồi
+  console.log('[background] Starting real-time polling (setInterval)');
+
+  // Poll jobs mỗi 1.5 giây — real-time nhờ port giữ worker sống
+  pollIntervalId = setInterval(() => {
+    pollJobs();
+  }, 1500);
+
+  // Poll commands mỗi 2 giây
+  commandIntervalId = setInterval(() => {
+    pollCommands();
+  }, 2000);
+}
+
+function stopPolling() {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+  if (commandIntervalId) {
+    clearInterval(commandIntervalId);
+    commandIntervalId = null;
+  }
+  console.log('[background] Stopped real-time polling (no ports)');
+}
+
+// ============================================================
+//  Alarms backup — khi không có content-script port nào kết nối
+//  (tối thiểu 1 phút trong MV3, dùng làm fallback)
 // ============================================================
 
 chrome.runtime.onStartup.addListener(() => {
@@ -38,49 +91,54 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 function createAlarms() {
-  // Poll jobs mỗi 1s
-  chrome.alarms.create('pollJobs', { periodInMinutes: 1/60 });
-  // Poll commands mỗi 1s
-  chrome.alarms.create('pollCommands', { periodInMinutes: 1/60 });
-  // Heartbeat mỗi 5s
-  chrome.alarms.create('heartbeat', { periodInMinutes: 5/60 });
+  // Chỉ tạo alarms cho các tác vụ không cần real-time
+  // Heartbeat mỗi 1 phút (MV3 minimum)
+  chrome.alarms.create('heartbeat', { periodInMinutes: 1 });
   // Reload custom_link tab mỗi 30 phút
   chrome.alarms.create('reloadCustomLink', { periodInMinutes: 30 });
-  // Self-ping mỗi 20s để tránh worker bị suspend
-  chrome.alarms.create('keepAlive', { periodInMinutes: 20/60 });
-  // Deep warmup — đảm bảo tab affiliate + content script sẵn sàng mỗi 30s
-  chrome.alarms.create('deepWarmup', { periodInMinutes: 30/60 });
-  console.log('[background] Alarms created');
+  // Wake-up check: kiểm tra xem cần kết nối lại không
+  chrome.alarms.create('wakeupCheck', { periodInMinutes: 1 });
+  console.log('[background] Backup alarms created');
 }
-
-// ============================================================
-//  Xử lý alarm
-// ============================================================
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   switch (alarm.name) {
-    case 'pollJobs':
-      await pollJobs();
-      break;
-    case 'pollCommands':
-      await pollCommands();
-      break;
     case 'heartbeat':
       await sendHeartbeat();
       break;
     case 'reloadCustomLink':
       await reloadCustomLinkTab();
       break;
-    case 'deepWarmup':
-      // Deep warmup: đảm bảo tab affiliate + content script sẵn sàng
-      await prepareAffiliateTab();
-      break;
-    case 'keepAlive':
-      // Chỉ cần 1 log nhẹ để worker không bị suspend
-      console.debug('[background] keepAlive');
+    case 'wakeupCheck':
+      // Khi worker thức dậy từ alarm, kiểm tra có tab affiliate không
+      // Nếu có, thử inject content script để kích hoạt port connection
+      await tryWakeUpContentScript();
       break;
   }
 });
+
+// ============================================================
+//  Wakeup — khi worker bị terminate rồi thức dậy
+// ============================================================
+
+async function tryWakeUpContentScript() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+    if (tabs.length > 0) {
+      const tab = tabs.find(t => t.status === 'complete');
+      if (tab && tab.id != null) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content.js']
+          });
+          // Khi content.js chạy, nó sẽ connect port → polling tự động bắt đầu
+        } catch {}
+      }
+    }
+    // Nếu không có tab nào, không sao — lần sau mở tab sẽ tự kết nối
+  } catch {}
+}
 
 // ============================================================
 //  Poll jobs từ relay
@@ -126,7 +184,6 @@ async function handleCommands(commands) {
     if (cmd.action === 'reload_custom_link') {
       await ensureAffiliateTabFresh();
     } else if (cmd.action === 'warmup') {
-      // Warmup: đảm bảo tab affiliate tồn tại, inject content script, sẵn sàng ngay
       await prepareAffiliateTab();
     }
   }
@@ -141,20 +198,16 @@ async function prepareAffiliateTab() {
     let tabId = await getAffiliateTab();
     if (!tabId) return null;
     
-    // Kiểm tra nếu tab bị Chrome discard (suspend để tiết kiệm RAM)
-    // Nếu bị discard, cần đánh thức tab bằng cách update URL
     try {
       const tab = await chrome.tabs.get(tabId);
       if (tab.discarded) {
         console.log('[background] tab is discarded, waking up...', tabId);
-        // Đánh thức tab: update URL -> Chrome sẽ unsuspend và reload
         await chrome.tabs.update(tabId, { url: tab.url });
         await waitForTab(tabId);
         console.log('[background] tab woken up', tabId);
       }
     } catch (e) {
       console.warn('[background] check discarded failed', e);
-      // Nếu tab không tồn tại, bỏ cache và tìm lại
       cachedAffiliateTabId = null;
       tabId = await getAffiliateTab();
     }
@@ -168,14 +221,12 @@ async function prepareAffiliateTab() {
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'PING' });
     } catch {
-      // Nếu PING vẫn thất bại, thử inject lại và ping lần nữa
       try {
         await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
         await chrome.tabs.sendMessage(tabId, { type: 'PING' });
       } catch {}
     }
     
-    // Cache tabId để dùng ngay lần tiếp theo
     cachedAffiliateTabId = tabId;
     return tabId;
   } catch (e) {
@@ -185,7 +236,6 @@ async function prepareAffiliateTab() {
   }
 }
 
-// Lấy tab affiliate (tự động tạo nếu chưa có)
 async function getAffiliateTab() {
   let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
   
@@ -235,12 +285,10 @@ async function reloadCustomLinkTab() {
 async function processRelayJob(jobId, urls) {
   let payload;
   try {
-    // Dùng cached tab ngay lập tức — không query tabs
     let tabId = cachedAffiliateTabId;
     let fallback = false;
     
     if (!tabId) {
-      // Không có cached, fallback query tabs
       let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
       if (!tabs.length) {
         const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
@@ -251,16 +299,13 @@ async function processRelayJob(jobId, urls) {
       fallback = true;
     }
     
-    // Kiểm tra nhanh tab có còn hoạt động không
     try {
       const tab = await chrome.tabs.get(tabId);
       if (tab.discarded) {
-        // Tab bị Chrome discard — đánh thức
         await chrome.tabs.update(tabId, { url: tab.url });
         await waitForTab(tabId);
       }
     } catch {
-      // Tab không tồn tại — fallback
       let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
       if (!tabs.length) {
         const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
@@ -271,12 +316,10 @@ async function processRelayJob(jobId, urls) {
       fallback = true;
     }
     
-    // Chỉ inject nếu chưa có hoặc fallback
     if (fallback || !injectedTabs.has(tabId)) {
       await injectContentScript(tabId);
     }
     
-    // Gửi message ngay — content script đã sẵn sàng từ warmup
     const result = await sendMessageToTabWithRetry(tabId, { type: 'CONVERT_URLS', urls });
     const results = {};
     for (const url of urls) {
@@ -284,7 +327,6 @@ async function processRelayJob(jobId, urls) {
     }
     payload = { results };
     
-    // Cache lại tabId cho lần sau
     cachedAffiliateTabId = tabId;
   } catch (e) {
     payload = { error: e.message };
@@ -297,6 +339,17 @@ async function processRelayJob(jobId, urls) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    });
+  } catch {}
+}
+
+// Handle convert result sent via port (from content.js)
+function handleConvertResult(jobId, result) {
+  try {
+    fetch(`${RELAY}/api/result/${jobId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result),
     });
   } catch {}
 }

@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8"/>
   <style>
-    body { font-family: sans-serif; width: 260px; padding: 16px; font-size: 13px; }
+    body { font-family: sans-serif; width: 280px; padding: 16px; font-size: 13px; }
     h3   { color: #ee4d2d; margin: 0 0 12px; }
-    .status { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 12px; }
+    .status { padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 12px; line-height: 1.4; }
     .ok  { background: #e8f5e9; color: #2e7d32; }
     .err { background: #fce4ec; color: #b71c1c; }
+    .warn { background: #fff3e0; color: #e65100; }
     .btn {
       width: 100%; padding: 8px; background: #ee4d2d; color: #fff;
       border: none; border-radius: 6px; font-size: 13px;
@@ -15,12 +16,21 @@
     }
     .btn:hover { opacity: 0.85; }
     .btn-secondary { background: #f0f0f0; color: #333; }
+    .btn-sm { background: #ff6d00; color: #fff; font-size: 11px; padding: 6px; }
+    .footer { margin-top: 10px; font-size: 10px; color: #999; text-align: center; }
   </style>
 </head>
 <body>
-  <h3>Shopee Aff Tool</h3>
-  <div id="status" class="status err">Đang kiểm tra...</div>
+  <h3>Shopee Aff Tool v2.0</h3>
+  
+  <div id="status" class="status err">Đang kiểm tra tab Affiliate...</div>
+  <div id="relayStatus" class="status warn">Đang kiểm tra relay server...</div>
+  
+  <button class="btn btn-sm" id="fixBtn" style="margin-bottom: 6px;">Fix Extension</button>
   <button class="btn btn-secondary" onclick="openAffiliate()">Mở Shopee Affiliate</button>
+  
+  <div class="footer">Extension tự động kết nối 24/7</div>
+  
   <script src="popup.js"></script>
 </body>
 </html>

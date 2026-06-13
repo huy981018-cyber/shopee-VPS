@@ -3,6 +3,52 @@ console.log('[content] content script loaded');
 if (!window.__shopeeAffToolContentInstalled) {
   window.__shopeeAffToolContentInstalled = true;
 
+  // ============================================================
+  //  Persistent Port Connection — Giữ Service Worker sống
+  //  Mở port và keepalive mỗi 10s để worker không bị terminate
+  // ============================================================
+  let backgroundPort = null;
+
+  function connectPort() {
+    try {
+      backgroundPort = chrome.runtime.connect({ name: 'shopee-aff-content' });
+      console.log('[content] Port connected to background');
+
+      backgroundPort.onDisconnect.addListener(() => {
+        console.log('[content] Port disconnected, reconnecting...');
+        backgroundPort = null;
+        // Thử kết nối lại sau 1 giây
+        setTimeout(connectPort, 1000);
+      });
+    } catch (e) {
+      console.warn('[content] Port connection failed, retrying...', e);
+      backgroundPort = null;
+      setTimeout(connectPort, 2000);
+    }
+  }
+
+  // Keepalive: gửi message mỗi 10s để giữ worker sống
+  setInterval(() => {
+    if (backgroundPort) {
+      try {
+        backgroundPort.postMessage({ type: 'KEEPALIVE' });
+      } catch {
+        // port bị đứt, reconnect
+        backgroundPort = null;
+        connectPort();
+      }
+    } else {
+      connectPort();
+    }
+  }, 10000);
+
+  // Kết nối ngay khi content script load
+  connectPort();
+
+  // ============================================================
+  //  Message handling (giữ nguyên logic cũ)
+  // ============================================================
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'CONVERT_URLS') {
       console.log('[content] CONVERT_URLS received', message.urls);
