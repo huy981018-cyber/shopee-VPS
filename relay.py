@@ -246,9 +246,31 @@ def cleanup_loop():
                     ev.set()
 
 
+# ============================================================
+#  WARMUP LOOP: Giữ extension background worker sống
+#  Gửi lệnh warmup mỗi 15s để:
+#   1. Giữ Chrome extension worker khỏi bị treo
+#   2. Giữ tab affiliate luôn sẵn sàng với content script injected
+#   3. Đảm bảo chuyển đổi link ngay lập tức khi user vào web
+# ============================================================
+def warmup_loop():
+    import urllib.request as urllib_req, urllib.error as urllib_err
+    while True:
+        time.sleep(15)  # cứ 15s gửi warmup 1 lần
+        try:
+            req = urllib_req.Request(
+                'http://localhost:8080/api/warmup',
+                method='GET'
+            )
+            urllib_req.urlopen(req, timeout=5)
+        except Exception:
+            pass  # silent — server chưa sẵn sàng hoặc extension chưa kết nối
+
+
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 ThreadingTCPServer.allow_reuse_address = True
 ThreadingTCPServer.daemon_threads = True
 threading.Thread(target=cleanup_loop, daemon=True).start()
+threading.Thread(target=warmup_loop, daemon=True).start()
 print('Server running on http://localhost:8080')
 ThreadingTCPServer(('0.0.0.0', 8080), Handler).serve_forever()

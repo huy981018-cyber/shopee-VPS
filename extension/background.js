@@ -39,8 +39,10 @@ function createAlarms() {
   chrome.alarms.create('heartbeat', { periodInMinutes: 5/60 });
   // Reload custom_link tab mỗi 30 phút
   chrome.alarms.create('reloadCustomLink', { periodInMinutes: 30 });
-  // Self-ping mỗi 25s để tránh worker bị suspend
-  chrome.alarms.create('keepAlive', { periodInMinutes: 25/60 });
+  // Self-ping mỗi 20s để tránh worker bị suspend
+  chrome.alarms.create('keepAlive', { periodInMinutes: 20/60 });
+  // Deep warmup — đảm bảo tab affiliate + content script sẵn sàng mỗi 45s
+  chrome.alarms.create('deepWarmup', { periodInMinutes: 45/60 });
   console.log('[background] Alarms created');
 }
 
@@ -61,6 +63,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       break;
     case 'reloadCustomLink':
       await reloadCustomLinkTab();
+      break;
+    case 'deepWarmup':
+      // Deep warmup: đảm bảo tab affiliate + content script sẵn sàng
+      await prepareAffiliateTab();
       break;
     case 'keepAlive':
       // Chỉ cần 1 log nhẹ để worker không bị suspend
