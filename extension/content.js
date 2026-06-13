@@ -29,7 +29,7 @@ async function convertUrls(urls) {
 
     Object.assign(results, batchResults);
 
-    if (i + BATCH_SIZE < urls.length) await sleep(1000);
+    if (i + BATCH_SIZE < urls.length) await sleep(300);
   }
 
   return { results };

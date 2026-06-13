@@ -228,7 +228,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def cleanup_loop():
     while True:
-        time.sleep(5)
+        time.sleep(2)
         now = time.time()
         with lock:
             stale = [jid for jid, j in jobs.items()

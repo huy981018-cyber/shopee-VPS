@@ -211,6 +211,7 @@
     }
 
     async function sendConvert(urls, ms) {
+      // Timeout gốc: 10s mỗi batch như thiết kế ban đầu
       return withTimeout(fetch(`${RELAY_BASE}/api/convert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -266,7 +267,7 @@
     // Gửi tất cả URLs cùng lúc cho extension, trả về map { url → affLink | Error }
     async function generateAffLinks(urls) {
       const batches = Math.ceil(urls.length / 5);
-      const ms = batches * 10000; // 10s mỗi batch
+      const ms = batches * 10000; // 10s mỗi batch (giữ nguyên như cũ)
       const result = await sendConvert(urls, ms);
       if (result?.error) throw new Error(result.error);
       return urls.reduce((map, url) => {
@@ -326,7 +327,6 @@
       });
 
       // Resolve non-Shopee URLs trước — tìm URL Shopee thật sự đằng sau redirect
-      // resolvedMap: originalUrl → shopeeUrl (hoặc null nếu không phải Shopee)
       const resolvedMap = {};
       await Promise.all(allUrls.map(async (url) => {
         if (isShopeeUrl(url)) { resolvedMap[url] = url; return; }
