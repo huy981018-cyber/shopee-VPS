@@ -12,6 +12,7 @@ counter = [0]
 last_heartbeat = [0.0]
 affiliate_tab_ok = [None]
 pending_commands = []
+last_reload_request = [0.0]  # timestamp của lần reload cuối
 
 # ============================================================
 #  WebSocket clients — extension kết nối WebSocket sẽ được
@@ -329,11 +330,14 @@ class Handler(SimpleHTTPRequestHandler):
             ws_connected = False
             with ws_lock:
                 ws_connected = len(ws_clients) > 0
+            # Chỉ báo sẵn sàng nếu heartbeat đến SAU lần reload cuối
+            reload_ts = last_reload_request[0]
+            hb_ok = (last_heartbeat[0] >= reload_ts and affiliate_tab_ok[0] == True)
             self._json(200, {
                 'server': True,
                 'extension': ext_ok,
                 'ws_connected': ws_connected,
-                'affiliate_tab': affiliate_tab_ok[0],
+                'affiliate_tab': True if hb_ok else None,
                 'pending_jobs': pending,
             })
 
@@ -394,6 +398,8 @@ class Handler(SimpleHTTPRequestHandler):
         elif self.path == '/api/reload-custom-link':
             with lock:
                 pending_commands.append({'action': 'reload_custom_link'})
+                affiliate_tab_ok[0] = None  # đang reload, chưa sẵn sàng
+                last_reload_request[0] = time.time()
             ws_broadcast(json.dumps({'type': 'commands', 'commands': [{'action': 'reload_custom_link'}]}))
             self._json(200, {'ok': True})
 
@@ -411,6 +417,8 @@ class Handler(SimpleHTTPRequestHandler):
             if action == 'reload_custom_link':
                 with lock:
                     pending_commands.append({'action': 'reload_custom_link'})
+                    affiliate_tab_ok[0] = None  # đang reload, chưa sẵn sàng
+                    last_reload_request[0] = time.time()
                 ws_broadcast(json.dumps({'type': 'commands', 'commands': [{'action': 'reload_custom_link'}]}))
                 self._json(200, {'ok': True})
             else:
