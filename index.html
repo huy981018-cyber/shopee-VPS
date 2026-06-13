@@ -131,6 +131,7 @@
     async function resetAll() {
       // Reset UI
       const btn = document.getElementById('btn-convert');
+      const banner = document.getElementById('banner');
       btn.disabled = true;
       btn.textContent = 'Đang reset...';
       document.getElementById('progress-wrap').style.display = 'none';
@@ -141,6 +142,9 @@
       document.getElementById('result-count').textContent = '0';
       document.getElementById('detail-count').textContent = '0';
       bulkResults = [];
+
+      banner.className = 'banner banner-warn';
+      banner.textContent = '🔄 Đang reset extension + reload tab affiliate...';
 
       // Bước 1: Gọi reset relay (giải phóng jobs treo + unblock)
       try {
@@ -159,7 +163,7 @@
         });
       } catch (e) { console.log('fix-extension failed:', e); }
 
-      // Bước 3: Reload custom_link tab trực tiếp (endpoint cũ)
+      // Bước 3: Reload custom_link tab trực tiếp
       try {
         await fetch(`${RELAY_BASE}/api/reload-custom-link`, {
           method: 'POST',
@@ -168,7 +172,7 @@
         });
       } catch (e) { console.log('reload-custom-link failed:', e); }
 
-      // Bước 4: Gửi reload command cho extension
+      // Bước 4: Gửi reload command cho extension (qua WebSocket)
       try {
         await fetch(`${RELAY_BASE}/api/command`, {
           method: 'POST',
@@ -177,12 +181,38 @@
         });
       } catch (e) { console.log('send reload command failed:', e); }
 
-      // Bước 5: Chờ extension xử lý
-      await sleep(3000);
+      // Bước 5: Chờ extension xử lý — poll health cho đến khi sẵn sàng
+      // Kiểm tra: affiliate_tab = true và ws_connected = true
+      banner.textContent = '⏳ Đang chờ tab affiliate load xong...';
+      const ready = await waitForAffiliateReady();
+      
+      if (ready) {
+        banner.className = 'banner banner-ok';
+        banner.textContent = '✓ Reset thành công — Affiliate tab đã sẵn sàng';
+      } else {
+        banner.className = 'banner banner-warn';
+        banner.textContent = '⚠️ Reset xong — Tab affiliate có thể chưa load kịp, hãy thử convert';
+      }
       
       btn.disabled = false;
       btn.textContent = 'Chuyển đổi';
-      checkServer();
+    }
+
+    // Poll /api/health cho đến khi affiliate_tab = true hoặc timeout 8s
+    async function waitForAffiliateReady(timeoutMs = 8000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          const resp = await fetch(`${RELAY_BASE}/api/health`);
+          const data = await resp.json();
+          // Sẵn sàng khi: có tab affiliate + WebSocket đã kết nối
+          if (data.affiliate_tab === true) {
+            return true;
+          }
+        } catch {}
+        await sleep(500);
+      }
+      return false; // timeout
     }
 
     async function checkServer() {
