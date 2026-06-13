@@ -12,6 +12,11 @@ if (!window.__shopeeAffToolContentInstalled) {
       });
       return true;
     }
+    // PING response — dùng để warmup, đảm bảo content script đã sẵn sàng
+    if (message.type === 'PING') {
+      sendResponse({ pong: true });
+      return true;
+    }
   });
 }
 
@@ -29,7 +34,7 @@ async function convertUrls(urls) {
 
     Object.assign(results, batchResults);
 
-    if (i + BATCH_SIZE < urls.length) await sleep(300);
+    if (i + BATCH_SIZE < urls.length) await sleep(1000);
   }
 
   return { results };

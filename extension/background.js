@@ -1,6 +1,6 @@
 // ============================================================
-//  Background Service Worker — OPTIMIZED FOR SPEED
-//  Giữ worker sống, tự động refresh tab affiliate, xử lý job nhanh
+//  Background Service Worker — GCP version (FIX: auto-recovery)
+//  Dùng chrome.alarms để giữ worker sống, thay vì while(true)
 // ============================================================
 
 let RELAY = 'http://localhost:8080';
@@ -12,43 +12,36 @@ chrome.storage.sync.get('relayUrl', (data) => {
 });
 
 const activeJobs = new Set();
-let lastTabReload = 0; // timestamp lần cuối reload tab affiliate
-const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 phút
+const injectedTabs = new Set();
+
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === 'loading') injectedTabs.delete(tabId);
+});
+chrome.tabs.onRemoved.addListener(tabId => injectedTabs.delete(tabId));
 
 // ============================================================
-//  Giữ worker sống — dùng long-lived connection
+//  Thay while(true) bằng chrome.alarms — giữ worker sống
 // ============================================================
-
-function createKeepAlivePort() {
-  try {
-    const port = chrome.runtime.connect({ name: 'keepAlive' });
-    port.onDisconnect.addListener(() => setTimeout(createKeepAlivePort, 100));
-  } catch (e) {
-    setTimeout(createKeepAlivePort, 1000);
-  }
-}
 
 chrome.runtime.onStartup.addListener(() => {
-  createKeepAlivePort();
   createAlarms();
 });
-
 chrome.runtime.onInstalled.addListener(() => {
-  createKeepAlivePort();
   createAlarms();
 });
 
 function createAlarms() {
-  // Poll jobs mỗi 500ms (nhanh hơn)
-  chrome.alarms.create('pollJobs', { periodInMinutes: 0.5 / 60 });
+  // Poll jobs mỗi 1s
+  chrome.alarms.create('pollJobs', { periodInMinutes: 1/60 });
   // Poll commands mỗi 1s
-  chrome.alarms.create('pollCommands', { periodInMinutes: 1 / 60 });
+  chrome.alarms.create('pollCommands', { periodInMinutes: 1/60 });
   // Heartbeat mỗi 5s
-  chrome.alarms.create('heartbeat', { periodInMinutes: 5 / 60 });
-  // Refresh tab affiliate mỗi 5 phút (chủ động, tránh stale)
-  chrome.alarms.create('refreshTab', { periodInMinutes: 5 });
-  // KeepAlive mỗi 15s
-  chrome.alarms.create('keepAlive', { periodInMinutes: 15 / 60 });
+  chrome.alarms.create('heartbeat', { periodInMinutes: 5/60 });
+  // Reload custom_link tab mỗi 30 phút
+  chrome.alarms.create('reloadCustomLink', { periodInMinutes: 30 });
+  // Self-ping mỗi 25s để tránh worker bị suspend
+  chrome.alarms.create('keepAlive', { periodInMinutes: 25/60 });
+  console.log('[background] Alarms created');
 }
 
 // ============================================================
@@ -57,22 +50,27 @@ function createAlarms() {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   switch (alarm.name) {
-    case 'pollJobs':     await pollJobs(); break;
-    case 'pollCommands': await pollCommands(); break;
-    case 'heartbeat':    await sendHeartbeat(); break;
-    case 'refreshTab':
-      // Refresh tab affiliate định kỳ — giữ page luôn mới
-      await ensureAffiliateTabFresh();
+    case 'pollJobs':
+      await pollJobs();
+      break;
+    case 'pollCommands':
+      await pollCommands();
+      break;
+    case 'heartbeat':
+      await sendHeartbeat();
+      break;
+    case 'reloadCustomLink':
+      await reloadCustomLinkTab();
       break;
     case 'keepAlive':
-      // Ping nhẹ để worker không bị suspend
-      try { await fetch(`${RELAY}/api/ping`); } catch {}
+      // Chỉ cần 1 log nhẹ để worker không bị suspend
+      console.debug('[background] keepAlive');
       break;
   }
 });
 
 // ============================================================
-//  Poll jobs từ relay (nhanh hơn)
+//  Poll jobs từ relay
 // ============================================================
 
 async function pollJobs() {
@@ -83,11 +81,12 @@ async function pollJobs() {
     for (const [jobId, job] of Object.entries(jobs)) {
       if (!activeJobs.has(jobId)) {
         activeJobs.add(jobId);
-        // Xử lý bất đồng bộ, không await
         processRelayJob(jobId, job.urls ?? job);
       }
     }
-  } catch {}
+  } catch {
+    // silent
+  }
 }
 
 // ============================================================
@@ -100,106 +99,50 @@ async function pollCommands() {
     if (resp.ok) {
       const data = await resp.json();
       if (Array.isArray(data.commands) && data.commands.length) {
-        handleCommands(data.commands);
+        console.log('[background] received commands', data.commands);
+        await handleCommands(data.commands);
       }
     }
-  } catch {}
+  } catch {
+    // silent
+  }
 }
 
 async function handleCommands(commands) {
   for (const cmd of commands) {
     if (cmd.action === 'reload_custom_link') {
       await ensureAffiliateTabFresh();
+    } else if (cmd.action === 'warmup') {
+      // Warmup: đảm bảo tab affiliate tồn tại, inject content script, sẵn sàng ngay
+      await prepareAffiliateTab();
     }
   }
 }
 
 // ============================================================
-//  Đảm bảo tab affiliate luôn mới
+//  Warmup: giữ tab affiliate luôn sẵn sàng + content script injected
 // ============================================================
 
-async function ensureAffiliateTabFresh() {
+async function prepareAffiliateTab() {
   try {
-    let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+    const tabId = await getAffiliateTab();
+    if (!tabId) return;
     
-    // Nếu không có tab nào, tạo mới
-    if (!tabs.length) {
-      const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
-      await waitForTab(tab.id);
-      lastTabReload = Date.now();
-      return tab.id;
-    }
+    // Inject content script để content.js luôn sẵn sàng
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    } catch {}
     
-    // Lấy tab custom_link
-    const targetTab = tabs.find(tab => tab.url && tab.url.includes('/offer/custom_link')) || tabs[0];
+    // Ping content script để đảm bảo nó đã lắng nghe message
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+    } catch {}
     
-    // Reload nếu đã quá REFRESH_INTERVAL
-    if (Date.now() - lastTabReload > REFRESH_INTERVAL) {
-      await chrome.tabs.reload(targetTab.id);
-      await waitForTab(targetTab.id);
-      lastTabReload = Date.now();
-    }
-    
-    return targetTab.id;
+    return tabId;
   } catch (e) {
-    console.warn('[background] ensureAffiliateTabFresh failed', e);
+    console.warn('[background] prepareAffiliateTab failed', e);
     return null;
   }
-}
-
-// ============================================================
-//  Xử lý job chuyển đổi link (tối ưu tốc độ)
-// ============================================================
-
-async function processRelayJob(jobId, urls) {
-  let payload;
-  
-  try {
-    // Lấy tab affiliate (sẽ refresh nếu cần trong ensureAffiliateTabFresh)
-    const tabId = await getAffiliateTab();
-    if (!tabId) {
-      payload = { error: 'Không có tab affiliate' };
-      return;
-    }
-    
-    // Inject content script và gửi message
-    const result = await sendMessageToTab(tabId, { type: 'CONVERT_URLS', urls });
-    
-    const results = {};
-    for (const url of urls) {
-      results[url] = result?.results?.[url] ?? { error: 'Không nhận được kết quả' };
-    }
-    payload = { results };
-    
-  } catch (e) {
-    console.error('[background] processRelayJob failed:', e.message);
-    
-    // Thử lần cuối: tạo tab mới và chạy lại
-    try {
-      const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
-      await waitForTab(tab.id);
-      const result = await sendMessageToTab(tab.id, { type: 'CONVERT_URLS', urls });
-      const results = {};
-      for (const url of urls) {
-        results[url] = result?.results?.[url] ?? { error: 'Không nhận được kết quả' };
-      }
-      payload = { results };
-      lastTabReload = Date.now();
-    } catch (e2) {
-      payload = { error: e2.message };
-    }
-  } finally {
-    activeJobs.delete(jobId);
-  }
-  
-  // Gửi kết quả về relay
-  try {
-    await fetch(`${RELAY}/api/result/${jobId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch {}
 }
 
 // Lấy tab affiliate (tự động tạo nếu chưa có)
@@ -209,7 +152,6 @@ async function getAffiliateTab() {
   if (!tabs.length) {
     const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
     await waitForTab(tab.id);
-    lastTabReload = Date.now();
     return tab.id;
   }
   
@@ -217,32 +159,100 @@ async function getAffiliateTab() {
   return targetTab.id;
 }
 
-function waitForTab(tabId, timeout = 20000) {
+async function ensureAffiliateTabFresh() {
+  try {
+    const tabId = await getAffiliateTab();
+    if (!tabId) return null;
+    await chrome.tabs.reload(tabId);
+    await waitForTab(tabId);
+    return tabId;
+  } catch (e) {
+    console.warn('[background] ensureAffiliateTabFresh failed', e);
+    return null;
+  }
+}
+
+async function reloadCustomLinkTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+    const customTabs = tabs.filter(tab => tab.url && tab.url.includes('/offer/custom_link'));
+    if (customTabs.length) {
+      for (const tab of customTabs) {
+        if (tab.id != null) await chrome.tabs.reload(tab.id);
+      }
+      return;
+    }
+    await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
+  } catch (e) {
+    console.warn('[background] reloadCustomLinkTab failed', e);
+  }
+}
+
+// ============================================================
+//  Xử lý job chuyển đổi link
+// ============================================================
+
+async function processRelayJob(jobId, urls) {
+  let payload;
+  try {
+    let tabs = await chrome.tabs.query({ url: 'https://affiliate.shopee.vn/*' });
+    if (!tabs.length) {
+      const tab = await chrome.tabs.create({ url: 'https://affiliate.shopee.vn/offer/custom_link', active: false });
+      await waitForTab(tab.id);
+      tabs = [tab];
+    }
+    const tabId = tabs[0].id;
+    await injectContentScript(tabId);
+    const result = await sendMessageToTabWithRetry(tabId, { type: 'CONVERT_URLS', urls });
+    const results = {};
+    for (const url of urls) {
+      results[url] = result?.results?.[url] ?? { error: 'Không nhận được kết quả' };
+    }
+    payload = { results };
+  } catch (e) {
+    payload = { error: e.message };
+  } finally {
+    activeJobs.delete(jobId);
+  }
+  try {
+    await fetch(`${RELAY}/api/result/${jobId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {}
+}
+
+function waitForTab(tabId, timeout = 30000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error('Tab load timeout'));
+      reject(new Error('Tab không load xong sau ' + timeout / 1000 + 's'));
     }, timeout);
-    
     function listener(id, info) {
       if (id === tabId && info.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
         clearTimeout(timer);
-        setTimeout(resolve, 300); // chờ 300ms cho page ổn định
+        setTimeout(resolve, 500);
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
   });
 }
 
-async function sendMessageToTab(tabId, message) {
-  // Inject content script trước
+async function injectContentScript(tabId) {
+  if (injectedTabs.has(tabId)) return;
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-  } catch {}
-  
-  // Gửi message với retry nhanh
-  for (let attempt = 1; attempt <= 2; attempt++) {
+    injectedTabs.add(tabId);
+  } catch (e) {
+    console.warn('[background] injectContentScript failed', e);
+  }
+}
+
+async function sendMessageToTabWithRetry(tabId, message, retries = 2) {
+  let lastError;
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
       return await new Promise((resolve, reject) => {
         chrome.tabs.sendMessage(tabId, message, (response) => {
@@ -251,14 +261,14 @@ async function sendMessageToTab(tabId, message) {
         });
       });
     } catch (err) {
-      if (attempt < 2) {
+      lastError = err;
+      if (attempt <= retries) {
         await sleep(200);
-        try { await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); } catch {}
-      } else {
-        throw err;
+        await injectContentScript(tabId);
       }
     }
   }
+  throw lastError;
 }
 
 // ============================================================

@@ -2,29 +2,29 @@
 cd "$(dirname "$0")"
 
 cleanup() {
-    echo "D?ng t?t c?..."
+    echo "Dừng tất cả..."
     pkill -f "relay.py" 2>/dev/null
     pkill -f "google-chrome" 2>/dev/null
     exit 0
 }
 trap cleanup SIGINT SIGTERM
 
-RESTART_INTERVAL=3600  # 60 ph?t (gi?m restart server, tr?nh gi?n ?o?n)
-RELOAD_MIN=300         # 5 ph?t
-RELOAD_MAX=600         # 10 ph?t
+RESTART_INTERVAL=3600  # 1 giờ
+RELOAD_MIN=1700        # 25 phút
+RELOAD_MAX=1800        # 30 phút
 
 while true; do
-    echo "[$(date '+%H:%M:%S')] D?ng c?c ti?n tr?nh c?..."
+    echo "[$(date '+%H:%M:%S')] Dừng các tiến trình cũ..."
     pkill -f "relay.py" 2>/dev/null; sleep 1
     pkill -f "google-chrome" 2>/dev/null; sleep 1
 
-    echo "[$(date '+%H:%M:%S')] Kh?i ??ng Python Server..."
+    echo "[$(date '+%H:%M:%S')] Khởi động Python Server..."
     python3 relay.py &
     RELAY_PID=$!
     sleep 2
 
     END_TIME=$(($(date +%s) + $RESTART_INTERVAL))
-    echo "[$(date '+%H:%M:%S')] Server s? restart sau 30 ph?t..."
+    echo "[$(date '+%H:%M:%S')] Server sẽ restart sau 30 phút..."
 
     while true; do
         NOW=$(date +%s)
@@ -32,12 +32,12 @@ while true; do
             break
         fi
         if ! kill -0 "$RELAY_PID" 2>/dev/null; then
-            echo "[$(date '+%H:%M:%S')] Relay process ?? d?ng, restart ngay."
+            echo "[$(date '+%H:%M:%S')] Relay process đã dừng, restart ngay."
             break
         fi
 
         WAIT_TIME=$((RANDOM % (RELOAD_MAX - RELOAD_MIN + 1) + RELOAD_MIN))
-        echo "[$(date '+%H:%M:%S')] ??i $((WAIT_TIME / 60)) ph?t r?i reload custom_link..."
+        echo "[$(date '+%H:%M:%S')] Đợi $((WAIT_TIME / 60)) phút rồi reload custom_link..."
         sleep $WAIT_TIME
 
         NOW=$(date +%s)

@@ -211,7 +211,6 @@
     }
 
     async function sendConvert(urls, ms) {
-      // Timeout gốc: 10s mỗi batch như thiết kế ban đầu
       return withTimeout(fetch(`${RELAY_BASE}/api/convert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -267,7 +266,7 @@
     // Gửi tất cả URLs cùng lúc cho extension, trả về map { url → affLink | Error }
     async function generateAffLinks(urls) {
       const batches = Math.ceil(urls.length / 5);
-      const ms = batches * 10000; // 10s mỗi batch (giữ nguyên như cũ)
+      const ms = batches * 10000; // 10s mỗi batch
       const result = await sendConvert(urls, ms);
       if (result?.error) throw new Error(result.error);
       return urls.reduce((map, url) => {
@@ -327,6 +326,7 @@
       });
 
       // Resolve non-Shopee URLs trước — tìm URL Shopee thật sự đằng sau redirect
+      // resolvedMap: originalUrl → shopeeUrl (hoặc null nếu không phải Shopee)
       const resolvedMap = {};
       await Promise.all(allUrls.map(async (url) => {
         if (isShopeeUrl(url)) { resolvedMap[url] = url; return; }
@@ -465,8 +465,26 @@
     function truncate(str, n) { return str.length > n ? str.slice(0, n) + '…' : str; }
     function sleep(ms)        { return new Promise(r => setTimeout(r, ms)); }
 
+    // Warmup: khi tải trang, gửi lệnh warmup để extension chuẩn bị tab affiliate sẵn
+    async function warmupExtension() {
+      try {
+        await fetch(`${RELAY_BASE}/api/warmup`);
+        console.log('[page] warmup sent');
+      } catch {}
+    }
+
     // Kiểm tra server ngay khi tải trang
     checkServer();
+
+    // Warmup sau 500ms để không ảnh hưởng checkServer
+    setTimeout(warmupExtension, 500);
+
+    // Warmup lại mỗi khi tab được focus (user quay lại sau 30p)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        warmupExtension();
+      }
+    });
   </script>
 </body>
 </html>

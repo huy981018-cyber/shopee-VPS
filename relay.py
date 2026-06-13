@@ -64,6 +64,12 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/ping':
             self._json(200, {'ok': True})
 
+        elif self.path == '/api/warmup':
+            with lock:
+                pending_commands.append({'action': 'warmup'})
+            self._json(200, {'ok': True, 'message': 'Warmup command sent'})
+
+
         elif self.path == '/api/extension-health':
             with lock:
                 self._json(200, {
@@ -228,7 +234,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def cleanup_loop():
     while True:
-        time.sleep(2)
+        time.sleep(5)
         now = time.time()
         with lock:
             stale = [jid for jid, j in jobs.items()
